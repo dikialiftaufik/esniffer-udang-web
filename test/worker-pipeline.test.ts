@@ -312,3 +312,42 @@ test('INGEST-HEALTH: pesan duplikat mencatat outcome "duplicate", topik rusak di
   );
   assert.strictEqual(storage.notedOutcomes[2].mqttDeviceId, 'unknown');
 });
+
+test('FIRMWARE-COMPAT: payload persis gaya firmware ESP32-S3 diterima SYNCED', async () => {
+  // Ciri khas firmware: measured_at tanpa mili-detik, MQ integer mentah,
+  // tanpa kunci time_reference, uptime besar, message_id nol-padded.
+  const storage = createSetupStorage();
+  const rawPayload = JSON.stringify({
+    schema_version: 1,
+    device_id: 'esp32-001',
+    message_id: '550e8400-e29b-41d4-a716-446655440007:0000000007',
+    boot_id: '550e8400-e29b-41d4-a716-446655440007',
+    sequence: 7,
+    sample_uptime_ms: 3723000,
+    measured_at: '2026-09-30T07:15:32Z',
+    clock_synced: true,
+    firmware_version: 'esp32-s3-mqtt-v1',
+    sensors: {
+      temperature_c: { value: 27.4, quality: 'ok' },
+      humidity_percent: { value: 71.2, quality: 'ok' },
+      mq137_raw: { value: 1834, quality: 'ok' },
+      mq136_raw: { value: 2100, quality: 'ok' },
+      mq4_raw: { value: 912, quality: 'ok' },
+    },
+  });
+  const topic = 'esniffer/v1/devices/esp32-001/telemetry';
+
+  const result = await processTelemetryMessage(
+    topic,
+    rawPayload,
+    storage,
+    new Date('2026-09-30T07:15:35.000Z')
+  );
+
+  assert.strictEqual(result.status, 'accepted');
+  assert.strictEqual(result.ack.status, 'accepted');
+  assert.strictEqual(storage.insertedRecords.length, 1);
+  assert.strictEqual(storage.insertedRecords[0].measurementTimeQuality, 'SYNCED');
+  assert.strictEqual(storage.insertedRecords[0].chamberId, 'chamber-1');
+  assert.deepStrictEqual(storage.notedOutcomes, [{ mqttDeviceId: 'esp32-001', outcome: 'stored' }]);
+});
