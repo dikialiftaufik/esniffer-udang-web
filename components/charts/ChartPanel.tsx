@@ -13,6 +13,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { useAuth } from '../auth/AuthProvider';
+import type { StreamTick } from '../../hooks/useChamberStream';
 
 export type TimeRange = '15m' | '1h' | '6h' | '24h';
 
@@ -30,6 +31,8 @@ interface ChartPanelProps {
   lastMeasuredAt?: string | null;
   /** True bila data terakhir basi (alat offline). Indikator Live diganti label Riwayat. */
   isStale?: boolean;
+  /** Tick terbaru dari SSE 0,5 dtk. Ditempel sebagai ekor mentah sampai refresh bucket berikutnya. */
+  streamTick?: StreamTick | null;
 }
 
 const RANGE_DURATIONS: Record<TimeRange, number> = {
@@ -39,7 +42,7 @@ const RANGE_DURATIONS: Record<TimeRange, number> = {
   '24h': 24 * 60 * 60 * 1000,
 };
 
-export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale = false }: ChartPanelProps) {
+export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale = false, streamTick = null }: ChartPanelProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -56,6 +59,17 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale =
   const [chartData, setChartData] = useState<SensorChartPoint[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+
+  /**
+   * Ekor mentah dari SSE: titik tick yang lebih baru dari bucket terakhir.
+   * Dikosongkan tiap refresh series (bucket yang benar mengambil alih).
+   * Maksimal 120 titik agar DOM SVG tidak membengkak. Pembaruan memakai
+   * pola render-phase berpenjaga (sekali per tick baru).
+   */
+  const [tailState, setTailState] = useState<{ at: string | null; points: SensorChartPoint[] }>({
+    at: null,
+    points: [],
+  });
 
   /**
    * Jendela data terakhir yang disematkan (mode riwayat): {chamberId, from, to}
@@ -149,6 +163,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale =
         });
 
         setChartData(points);
+        setTailState((prev) => ({ at: prev.at, points: [] }));
         setFetchError(null);
       } catch (err: unknown) {
         if (isCancelled || !isMountedRef.current) return;
@@ -178,6 +193,39 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale =
       clearInterval(intervalId);
     };
   }, [resolvedChamberId, activeRange, apiFetch, retryCount, pinned]);
+
+  // Tempel tick SSE sebagai ekor mentah (diabaikan saat jendela tersemat).
+  const pinnedActive = pinned !== null && pinned.chamberId === resolvedChamberId;
+  if (streamTick && streamTick.measuredAt !== tailState.at && !pinnedActive) {
+    const tickTime = new Date(streamTick.measuredAt).getTime();
+    if (!Number.isNaN(tickTime)) {
+      const d = new Date(streamTick.measuredAt);
+      const point: SensorChartPoint = {
+        time: d.toLocaleTimeString('id-ID', {
+          hour: '2-digit',
+          minute: '2-digit',
+          ...(activeRange === '15m' ? { second: '2-digit' } : {}),
+        }),
+        rawTimestamp: streamTick.measuredAt,
+        mq137: streamTick.values.mq137Raw.value,
+        mq136: streamTick.values.mq136Raw.value,
+        mq4: streamTick.values.mq4Raw.value,
+      };
+      setTailState((prev) => {
+        if (prev.at === streamTick.measuredAt) return prev;
+        const next = prev.points.some((p) => p.rawTimestamp === point.rawTimestamp)
+          ? prev.points
+          : [...prev.points, point];
+        const trimmed = next.length > 120 ? next.slice(next.length - 120) : next;
+        return { at: streamTick.measuredAt, points: trimmed };
+      });
+    }
+  }
+
+  const mergedData = [...chartData, ...tailState.points.filter((p) => {
+    if (chartData.length === 0) return true;
+    return p.rawTimestamp > chartData[chartData.length - 1].rawTimestamp;
+  })];
 
   return (
     <div className="md:col-span-2 bg-white/10 backdrop-blur-lg border border-white/20 rounded-2xl flex flex-col shadow-[0_8px_32px_0_rgba(0,0,0,0.3)] p-6">
@@ -236,7 +284,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale =
 
       {/* Chart Body */}
       <div className="flex-1 w-full min-h-[220px]">
-        {isLoading && chartData.length === 0 ? (
+        {isLoading && mergedData.length === 0 ? (
           <div className="flex items-center justify-center h-full text-white/50 font-mono text-sm">
             <div className="flex items-center gap-2">
               <svg className="animate-spin h-5 w-5 text-cyan-400" fill="none" viewBox="0 0 24 24">
@@ -246,7 +294,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale =
               <span>Memuat data deret waktu...</span>
             </div>
           </div>
-        ) : fetchError && chartData.length === 0 ? (
+        ) : fetchError && mergedData.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-rose-300/80 font-mono text-xs gap-2 p-4 text-center">
             <svg className="w-8 h-8 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -259,7 +307,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale =
               Coba Lagi
             </button>
           </div>
-        ) : chartData.length === 0 ? (
+        ) : mergedData.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-white/40 font-mono text-sm gap-3 p-4 text-center">
             {pinned && pinned.chamberId === resolvedChamberId ? (
               <>
@@ -290,7 +338,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale =
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <LineChart data={mergedData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#ffffff15" vertical={false} />
               <XAxis
                 dataKey="time"

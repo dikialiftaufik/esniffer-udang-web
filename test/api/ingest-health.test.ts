@@ -146,6 +146,7 @@ describe('HTTP API v1: Kesehatan ingest', () => {
 
     assert.ok(json.data.totals.stored >= 10);
     assert.ok(json.data.totals.rejected >= 5);
+    assert.ok(typeof json.data.totals.tableBytes === 'number' && json.data.totals.tableBytes > 0);
     assert.strictEqual(entry.rateLast10m.sampleSize, 3);
     assert.strictEqual(entry.rateLast10m.medianGapMs, 30_000);
     assert.strictEqual(entry.rateLast10m.medianLagMs, 2_000);

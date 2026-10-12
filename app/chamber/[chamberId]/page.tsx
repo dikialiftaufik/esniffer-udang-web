@@ -7,6 +7,7 @@ import ChartPanel from '../../../components/charts/ChartPanel';
 import ExportPanel from '../../../components/layout/ExportPanel';
 import SensorCard from '../../../components/ui/SensorCard';
 import { useChamberLatest } from '../../../hooks/useChamberLatest';
+import { useChamberStream } from '../../../hooks/useChamberStream';
 import { useAuth } from '../../../components/auth/AuthProvider';
 
 const FRESHNESS_THRESHOLD_SECONDS = 15;
@@ -27,6 +28,23 @@ export default function Dashboard() {
   const reading = deviceStatus?.reading || null;
   const connection = deviceStatus?.connection || null;
   const apiFresnhess = deviceStatus?.freshness || null;
+
+  // Dorongan SSE 0,5 dtk (pelengkap polling 5 dtk): tick yang lebih baru
+  // dari hasil polling langsung dipakai kartu + grafik.
+  const { tick: streamTick } = useChamberStream(resolvedChamberId || rawChamberId || null);
+  const shown =
+    streamTick && (!reading?.measuredAt || streamTick.measuredAt >= reading.measuredAt)
+      ? {
+          id: reading?.id ?? `stream-${streamTick.historySequence}`,
+          measuredAt: streamTick.measuredAt,
+          receivedAt: streamTick.receivedAt,
+          measurementTimeQuality: streamTick.measurementTimeQuality as
+            | 'SYNCED'
+            | 'RECONSTRUCTED'
+            | 'UNKNOWN',
+          values: streamTick.values,
+        }
+      : reading;
 
   // ── Live freshness ticker ─────────────────────────────────────────────────
   // We recompute freshness locally every second so that the badge continuously
@@ -78,7 +96,7 @@ export default function Dashboard() {
       tickerRef.current = null;
     }
 
-    const measuredAt = reading?.measuredAt ?? null;
+    const measuredAt = shown?.measuredAt ?? null;
     measuredAtRef.current = measuredAt;
 
     const compute = () => {
@@ -99,7 +117,7 @@ export default function Dashboard() {
     return () => {
       if (tickerRef.current) clearInterval(tickerRef.current);
     };
-  }, [reading?.measuredAt]);
+  }, [shown?.measuredAt]);
 
   // Derived freshness state (client-side, live)
   const liveFreshnessState: 'fresh' | 'stale' | 'unknown' =
@@ -153,7 +171,7 @@ export default function Dashboard() {
 
   const renderFreshnessPill = () => {
     // Always show something when we have any freshness info (live or API)
-    const hasData = reading !== null || apiFresnhess !== null;
+    const hasData = shown !== null || apiFresnhess !== null;
     if (!hasData) return null;
 
     const isFresh = liveFreshnessState === 'fresh';
@@ -163,8 +181,8 @@ export default function Dashboard() {
     return (
       <span
         title={
-          reading?.measuredAt
-            ? `Waktu ukur: ${new Date(reading.measuredAt).toLocaleString('id-ID')}`
+          shown?.measuredAt
+            ? `Waktu ukur: ${new Date(shown.measuredAt).toLocaleString('id-ID')}`
             : 'Belum ada waktu ukur'
         }
         className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase tracking-wider border ${
@@ -237,12 +255,13 @@ export default function Dashboard() {
       )}
 
       {/* Banner mode riwayat: eksplisit saat data terakhir basi */}
-      {liveFreshnessState === 'stale' && reading?.measuredAt && (        <div
+      {liveFreshnessState === 'stale' && shown?.measuredAt && (
+        <div
           role="status"
           className="px-6 py-3 rounded-2xl bg-amber-500/10 backdrop-blur-md border border-amber-500/30 shadow-sm"
         >
           <p className="text-xs font-mono text-amber-200">
-            Mode riwayat — alat offline sejak {new Date(reading.measuredAt).toLocaleString('id-ID')}.
+            Mode riwayat — alat offline sejak {new Date(shown.measuredAt).toLocaleString('id-ID')}.
             Menampilkan data terakhir yang tersimpan.
           </p>
         </div>
@@ -254,21 +273,21 @@ export default function Dashboard() {
         <div className="flex flex-col gap-6 h-full">
           <MetricCard
             title={<>{chamberName}<br/>Sensor Suhu Lingkungan</>}
-            value={reading?.values?.temperatureC?.value ?? null}
+            value={shown?.values?.temperatureC?.value ?? null}
             unit="°C"
-            quality={reading?.values?.temperatureC?.quality}
+            quality={shown?.values?.temperatureC?.quality}
             isPrimary={true}
             subtitle={
-              reading?.measuredAt
-                ? `Ukur: ${new Date(reading.measuredAt).toLocaleTimeString('id-ID')}`
+              shown?.measuredAt
+                ? `Ukur: ${new Date(shown.measuredAt).toLocaleTimeString('id-ID')}`
                 : undefined
             }
           />
           <MetricCard
             title="Kelembaban Udara"
-            value={reading?.values?.humidityPercent?.value ?? null}
+            value={shown?.values?.humidityPercent?.value ?? null}
             unit="%RH"
-            quality={reading?.values?.humidityPercent?.quality}
+            quality={shown?.values?.humidityPercent?.quality}
             subtitle="Relative Humidity"
           />
         </div>
@@ -276,8 +295,9 @@ export default function Dashboard() {
         {/* Time-series Chart */}
         <ChartPanel
           chamberId={resolvedChamberId || rawChamberId || 'CH-01'}
-          lastMeasuredAt={reading?.measuredAt ?? null}
+          lastMeasuredAt={shown?.measuredAt ?? null}
           isStale={liveFreshnessState === 'stale'}
+          streamTick={streamTick}
         />
 
         {/* CSV Export & History Panel */}
@@ -293,9 +313,9 @@ export default function Dashboard() {
           imageSrc="/mq137.png"
           name="MQ-137"
           compound="Amonia (NH₃)"
-          value={reading?.values?.mq137Raw?.value ?? null}
+          value={shown?.values?.mq137Raw?.value ?? null}
           unit="raw"
-          quality={reading?.values?.mq137Raw?.quality}
+          quality={shown?.values?.mq137Raw?.quality}
           dotColorClass="bg-[#38bdf8]"
           compoundColorClass="text-cyan-300"
         />
@@ -303,9 +323,9 @@ export default function Dashboard() {
           imageSrc="/mq136.png"
           name="MQ-136"
           compound="Hidrogen Sulfida (H₂S)"
-          value={reading?.values?.mq136Raw?.value ?? null}
+          value={shown?.values?.mq136Raw?.value ?? null}
           unit="raw"
-          quality={reading?.values?.mq136Raw?.quality}
+          quality={shown?.values?.mq136Raw?.quality}
           dotColorClass="bg-[#d8b4fe]"
           compoundColorClass="text-purple-300"
         />
@@ -313,16 +333,16 @@ export default function Dashboard() {
           imageSrc="/mq4.png"
           name="MQ-4"
           compound="Metana (CH₄)"
-          value={reading?.values?.mq4Raw?.value ?? null}
+          value={shown?.values?.mq4Raw?.value ?? null}
           unit="raw"
-          quality={reading?.values?.mq4Raw?.quality}
+          quality={shown?.values?.mq4Raw?.quality}
           dotColorClass="bg-[#a78bfa]"
           compoundColorClass="text-emerald-300"
         />
         <SensorCard
           imageSrc="/dht22.png"
           name="DHT-22"
-          compound={`Suhu: ${reading?.values?.temperatureC?.value !== null && reading?.values?.temperatureC?.value !== undefined ? reading.values.temperatureC.value.toFixed(1) : '--'}°C | Kel: ${reading?.values?.humidityPercent?.value !== null && reading?.values?.humidityPercent?.value !== undefined ? reading.values.humidityPercent.value.toFixed(1) : '--'}%`}
+          compound={`Suhu: ${shown?.values?.temperatureC?.value !== null && shown?.values?.temperatureC?.value !== undefined ? shown.values.temperatureC.value.toFixed(1) : '--'}°C | Kel: ${shown?.values?.humidityPercent?.value !== null && shown?.values?.humidityPercent?.value !== undefined ? shown.values.humidityPercent.value.toFixed(1) : '--'}%`}
           dotColorClass="bg-white/40"
           compoundColorClass="text-amber-300"
         />

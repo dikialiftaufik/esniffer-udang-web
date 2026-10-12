@@ -1,6 +1,7 @@
 import { prisma } from '../../../../../lib/db/client.ts';
 import { requireAuth } from '../../../../../lib/auth/guard.ts';
 import { jsonResponse, errorResponse, getRequestId } from '../../../../../lib/api/response.ts';
+import { Prisma } from '@prisma/client';
 
 /**
  * GET /api/v1/ingest/health — ringkasan "data saya ke mana?".
@@ -107,7 +108,14 @@ export async function GET(request: Request): Promise<Response> {
     }
 
     const knownIds = new Set(devices.map((d) => d.mqttDeviceId));
-    const totals = { stored: 0, rejected: 0, duplicate: 0, dropped: 0, errors: 0 };
+    const totals = { stored: 0, rejected: 0, duplicate: 0, dropped: 0, errors: 0, tableBytes: 0 };
+
+    // Ukuran tabel untuk perencanaan kapasitas (retensi diputuskan manual,
+    // bukan hapus otomatis, karena ini data penelitian).
+    const sizeRows = await prisma.$queryRaw<Array<{ bytes: bigint }>>(
+      Prisma.sql`SELECT pg_total_relation_size('sensor_readings') AS bytes`
+    );
+    totals.tableBytes = Number(sizeRows[0]?.bytes ?? 0n);
 
     const deviceEntries = devices.map((d) => {
       const outcomes = outcomesBySender.get(d.mqttDeviceId) ?? {};
