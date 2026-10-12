@@ -73,7 +73,8 @@ const dtFmt = new Intl.DateTimeFormat('id-ID', {
   minute: '2-digit',
   timeZone: 'Asia/Jakarta',
 });
-const durFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
+/** Angka id-ID (koma desimal) — dipakai semua nilai numerik di section ini. */
+const numFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
 
 const SOURCE_LABEL: Record<string, string> = { market: 'Pasar', farm: 'Tambak' };
 const CONDITION_LABEL: Record<string, string> = { alive: 'Hidup', dead: 'Mati' };
@@ -84,15 +85,34 @@ const VISUAL_LABEL: Record<string, string> = {
   mixed_species: 'Campur spesies lain',
 };
 
-const show = (v: number | string | null | undefined, unit = '') =>
-  v === null || v === undefined || v === '' ? '—' : `${v}${unit}`;
+const EM_DASH = '—';
 
-/** Pasangan label–nilai untuk data form. */
+const num = (v: number | null | undefined, unit = '') =>
+  v === null || v === undefined ? EM_DASH : `${numFmt.format(v)}${unit}`;
+
+/** Durasi beli→tiba: menit bila <1 jam, jam berpecahan desimal bila ≥1 jam. */
+const durationText = (procuredIso: string, arrivedIso: string) => {
+  const minutes = Math.round((Date.parse(arrivedIso) - Date.parse(procuredIso)) / 60_000);
+  return minutes < 60 ? `${minutes} menit` : `${numFmt.format(minutes / 60)} jam`;
+};
+
+/**
+ * Pasangan label–nilai: label kecil redup di atas, nilai terang & lebih besar
+ * di bawah — hierarki baca jelas, nilai kosong ("—") diredupkan agar mata
+ * melompati kolom kosong.
+ */
 function DataPair({ label, value }: { label: string; value: React.ReactNode }) {
+  const empty = value === EM_DASH;
   return (
     <div className="min-w-0">
-      <dt className="text-[10px] font-mono uppercase tracking-widest text-white/45">{label}</dt>
-      <dd className="text-xs font-mono text-white/85 break-words">{value}</dd>
+      <dt className="text-[11px] font-mono text-white/55 leading-snug">{label}</dt>
+      <dd
+        className={`text-sm font-mono font-semibold leading-snug break-words ${
+          empty ? 'text-white/30' : 'text-white'
+        }`}
+      >
+        {value}
+      </dd>
     </div>
   );
 }
@@ -506,10 +526,10 @@ export default function BatchDetailPage() {
       <SuccessNotice message={notice} onDismiss={dismiss} />
 
       <div className={cardCls}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h3 className="text-sm font-mono font-bold text-white tracking-widest">DATA PENCATATAN</h3>
           <p className="text-[11px] font-mono text-white/45">
-            Data form tersimpan di sini — unduh metadata bersifat opsional.
+            Unduh metadata bersifat opsional — data form tampil di sini.
           </p>
         </div>
 
@@ -517,51 +537,57 @@ export default function BatchDetailPage() {
           <p className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
             Pengadaan
           </p>
-          <dl className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3">
             <DataPair label="Tanggal dan jam beli (WIB)" value={dtFmt.format(new Date(batch.procuredAtUtc))} />
             <DataPair label="Tanggal dan jam tiba di lab (WIB)" value={dtFmt.format(new Date(batch.arrivedAtUtc))} />
-            <DataPair
-              label="Durasi beli ke tiba"
-              value={`${durFmt.format(
-                (Date.parse(batch.arrivedAtUtc) - Date.parse(batch.procuredAtUtc)) / 3_600_000
-              )} jam`}
-            />
+            <DataPair label="Durasi beli ke tiba" value={durationText(batch.procuredAtUtc, batch.arrivedAtUtc)} />
             <DataPair label="Sumber pasar" value={batch.marketSource} />
             <DataPair label="Jenis sumber" value={SOURCE_LABEL[batch.sourceType] ?? batch.sourceType} />
             <DataPair label="Kondisi awal" value={CONDITION_LABEL[batch.initialCondition] ?? batch.initialCondition} />
-            <DataPair label="Jumlah ekor" value={batch.shrimpCount} />
-            <DataPair label="Berat total (gram)" value={show(batch.totalWeightG, ' g')} />
-            <DataPair label="Panjang udang (cm)" value={show(batch.shrimpLengthCm, ' cm')} />
-            <DataPair label="Ukuran (ekor/kg)" value={batch.sizeGrade} />
-            <DataPair label="Suhu awal udang (°C)" value={show(batch.initialTempC, ' °C')} />
-            <DataPair label="Suhu cool box min–max (°C)" value={`${show(batch.coolerTempMinC)} – ${show(batch.coolerTempMaxC, ' °C')}`} />
-            <DataPair label="Rasio es : udang" value={batch.iceToShrimpRatio} />
+            <DataPair label="Jumlah ekor" value={num(batch.shrimpCount)} />
+            <DataPair label="Berat total (g)" value={num(batch.totalWeightG, ' g')} />
+            <DataPair label="Panjang udang (cm)" value={num(batch.shrimpLengthCm, ' cm')} />
+            <DataPair label="Ukuran (ekor/kg)" value={num(batch.sizeGrade)} />
+            <DataPair label="Suhu awal udang (°C)" value={num(batch.initialTempC, ' °C')} />
             <DataPair
-              label="Catatan penolakan"
-              value={batch.rejectionNotes !== null && batch.rejectionNotes !== '' ? batch.rejectionNotes : '—'}
+              label="Suhu cool box min–max (°C)"
+              value={
+                batch.coolerTempMinC === null && batch.coolerTempMaxC === null
+                  ? EM_DASH
+                  : `${num(batch.coolerTempMinC)} – ${num(batch.coolerTempMaxC, ' °C')}`
+              }
             />
+            <DataPair label="Rasio es : udang" value={batch.iceToShrimpRatio} />
+            <DataPair label="Catatan penolakan" value={batch.rejectionNotes ?? EM_DASH} />
           </dl>
         </div>
 
-        <div className="space-y-3">
+        <div>
           <p className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
             Pengelompokan
           </p>
-          {batch.sampleGroups.map((g) => (
-            <div key={g.groupId} className="rounded-xl bg-black/25 border border-white/10 p-3 space-y-2">
-              <p className="text-xs font-mono font-bold text-white">
-                {g.groupId} • {g.storageCondition === 'cold' ? 'Suhu Dingin (4 ± 1 °C)' : 'Suhu Ruang (25 ± 2 °C)'}
-              </p>
-              <dl className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <DataPair label="Target suhu (°C)" value={show(g.targetTempC, ' °C')} />
-                <DataPair label="Suhu tusuk saat tiba (°C)" value={show(g.labTempC, ' °C')} />
-                <DataPair label="Temuan visual" value={VISUAL_LABEL[g.visualCheck] ?? g.visualCheck} />
-                <DataPair label="Ekor per sesi" value={g.sampleShrimpCount} />
-                <DataPair label="Berat sebelum observasi (g)" value={show(g.labWeightBeforeG, ' g')} />
-                <DataPair label="Berat sesudah observasi (g)" value={show(g.labWeightAfterG, ' g')} />
-              </dl>
-            </div>
-          ))}
+          <div className="space-y-4">
+            {batch.sampleGroups.map((g) => (
+              <div
+                key={g.groupId}
+                className={`pl-3 border-l-2 ${
+                  g.storageCondition === 'cold' ? 'border-cyan-400/60' : 'border-amber-300/60'
+                }`}
+              >
+                <p className="text-xs font-mono font-bold text-white">
+                  {g.groupId} • {g.storageCondition === 'cold' ? 'Suhu Dingin (4 ± 1 °C)' : 'Suhu Ruang (25 ± 2 °C)'}
+                </p>
+                <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3 mt-1.5">
+                  <DataPair label="Target suhu (°C)" value={num(g.targetTempC, ' °C')} />
+                  <DataPair label="Suhu tusuk saat tiba (°C)" value={num(g.labTempC, ' °C')} />
+                  <DataPair label="Temuan visual" value={VISUAL_LABEL[g.visualCheck] ?? g.visualCheck} />
+                  <DataPair label="Ekor per sesi" value={num(g.sampleShrimpCount)} />
+                  <DataPair label="Berat sebelum observasi (g)" value={num(g.labWeightBeforeG, ' g')} />
+                  <DataPair label="Berat sesudah observasi (g)" value={num(g.labWeightAfterG, ' g')} />
+                </dl>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
