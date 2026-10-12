@@ -21,6 +21,10 @@ interface GroupItem {
   groupId: string;
   storageCondition: string;
   targetTempC: number | null;
+  labTempC: number | null;
+  visualCheck: string;
+  labWeightBeforeG: number | null;
+  labWeightAfterG: number | null;
   sampleShrimpCount: number;
   sessions: SessionItem[];
 }
@@ -32,10 +36,20 @@ interface PhotoItem {
 
 interface BatchDetail {
   batchId: string;
+  procuredAtUtc: string;
+  arrivedAtUtc: string;
   marketSource: string;
+  sourceType: string;
   shrimpCount: number;
   totalWeightG: number | null;
   shrimpLengthCm: number | null;
+  sizeGrade: number;
+  initialCondition: string;
+  initialTempC: number | null;
+  coolerTempMinC: number | null;
+  coolerTempMaxC: number | null;
+  iceToShrimpRatio: string;
+  rejectionNotes: string | null;
   photos: PhotoItem[];
   lockedAt: string | null;
   sampleGroups: GroupItem[];
@@ -49,6 +63,39 @@ const btnPrimary =
   'px-4 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-mono font-bold tracking-wider transition-all disabled:opacity-50';
 const btnGhost =
   'px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 text-xs font-mono font-bold transition-all disabled:opacity-50';
+
+/** Tanggal + jam WIB (UTC+7) — input wizard memakai datetime-local WIB. */
+const dtFmt = new Intl.DateTimeFormat('id-ID', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: 'Asia/Jakarta',
+});
+const durFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
+
+const SOURCE_LABEL: Record<string, string> = { market: 'Pasar', farm: 'Tambak' };
+const CONDITION_LABEL: Record<string, string> = { alive: 'Hidup', dead: 'Mati' };
+const VISUAL_LABEL: Record<string, string> = {
+  normal: 'Normal',
+  melanosis: 'Melanosis (bintik hitam)',
+  damaged: 'Rusak fisik',
+  mixed_species: 'Campur spesies lain',
+};
+
+const show = (v: number | string | null | undefined, unit = '') =>
+  v === null || v === undefined || v === '' ? '—' : `${v}${unit}`;
+
+/** Pasangan label–nilai untuk data form. */
+function DataPair({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] font-mono uppercase tracking-widest text-white/45">{label}</dt>
+      <dd className="text-xs font-mono text-white/85 break-words">{value}</dd>
+    </div>
+  );
+}
 
 export default function BatchDetailPage() {
   const params = useParams();
@@ -457,6 +504,66 @@ export default function BatchDetailPage() {
       )}
 
       <SuccessNotice message={notice} onDismiss={dismiss} />
+
+      <div className={cardCls}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-mono font-bold text-white tracking-widest">DATA PENCATATAN</h3>
+          <p className="text-[11px] font-mono text-white/45">
+            Data form tersimpan di sini — unduh metadata bersifat opsional.
+          </p>
+        </div>
+
+        <div>
+          <p className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
+            Pengadaan
+          </p>
+          <dl className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <DataPair label="Tanggal dan jam beli (WIB)" value={dtFmt.format(new Date(batch.procuredAtUtc))} />
+            <DataPair label="Tanggal dan jam tiba di lab (WIB)" value={dtFmt.format(new Date(batch.arrivedAtUtc))} />
+            <DataPair
+              label="Durasi beli ke tiba"
+              value={`${durFmt.format(
+                (Date.parse(batch.arrivedAtUtc) - Date.parse(batch.procuredAtUtc)) / 3_600_000
+              )} jam`}
+            />
+            <DataPair label="Sumber pasar" value={batch.marketSource} />
+            <DataPair label="Jenis sumber" value={SOURCE_LABEL[batch.sourceType] ?? batch.sourceType} />
+            <DataPair label="Kondisi awal" value={CONDITION_LABEL[batch.initialCondition] ?? batch.initialCondition} />
+            <DataPair label="Jumlah ekor" value={batch.shrimpCount} />
+            <DataPair label="Berat total (gram)" value={show(batch.totalWeightG, ' g')} />
+            <DataPair label="Panjang udang (cm)" value={show(batch.shrimpLengthCm, ' cm')} />
+            <DataPair label="Ukuran (ekor/kg)" value={batch.sizeGrade} />
+            <DataPair label="Suhu awal udang (°C)" value={show(batch.initialTempC, ' °C')} />
+            <DataPair label="Suhu cool box min–max (°C)" value={`${show(batch.coolerTempMinC)} – ${show(batch.coolerTempMaxC, ' °C')}`} />
+            <DataPair label="Rasio es : udang" value={batch.iceToShrimpRatio} />
+            <DataPair
+              label="Catatan penolakan"
+              value={batch.rejectionNotes !== null && batch.rejectionNotes !== '' ? batch.rejectionNotes : '—'}
+            />
+          </dl>
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
+            Pengelompokan
+          </p>
+          {batch.sampleGroups.map((g) => (
+            <div key={g.groupId} className="rounded-xl bg-black/25 border border-white/10 p-3 space-y-2">
+              <p className="text-xs font-mono font-bold text-white">
+                {g.groupId} • {g.storageCondition === 'cold' ? 'Suhu Dingin (4 ± 1 °C)' : 'Suhu Ruang (25 ± 2 °C)'}
+              </p>
+              <dl className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <DataPair label="Target suhu (°C)" value={show(g.targetTempC, ' °C')} />
+                <DataPair label="Suhu tusuk saat tiba (°C)" value={show(g.labTempC, ' °C')} />
+                <DataPair label="Temuan visual" value={VISUAL_LABEL[g.visualCheck] ?? g.visualCheck} />
+                <DataPair label="Ekor per sesi" value={g.sampleShrimpCount} />
+                <DataPair label="Berat sebelum observasi (g)" value={show(g.labWeightBeforeG, ' g')} />
+                <DataPair label="Berat sesudah observasi (g)" value={show(g.labWeightAfterG, ' g')} />
+              </dl>
+            </div>
+          ))}
+        </div>
+      </div>
 
       <div className={cardCls}>
         <h3 className="text-sm font-mono font-bold text-white tracking-widest">FOTO DOKUMENTASI ({batch.photos.length}/10)</h3>
