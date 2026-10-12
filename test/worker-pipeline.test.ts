@@ -88,6 +88,13 @@ class MockStorage implements TelemetryStoragePort {
     });
     return { readingId };
   }
+
+  public notedOutcomes: Array<{ mqttDeviceId: string; outcome: string }> = [];
+
+  async recordIngestOutcome(mqttDeviceId: string, outcome: string, receivedAt: Date): Promise<void> {
+    void receivedAt;
+    this.notedOutcomes.push({ mqttDeviceId, outcome });
+  }
 }
 
 function createSetupStorage(): MockStorage {
@@ -255,4 +262,53 @@ test('Backlog dengan time anchor tersimpan sebagai RECONSTRUCTED dan memakai ID 
   assert.strictEqual(storage.insertedRecords[0].measurementTimeQuality, 'RECONSTRUCTED');
   assert.strictEqual(storage.insertedRecords[0].timeReferenceId, 'time-reference-1');
   assert.strictEqual(storage.timeReferences[0].reference_id, 'ntp-550e8400-1');
+});
+
+test('INGEST-HEALTH: pesan valid mencatat outcome "stored" untuk alatnya', async () => {
+  const storage = createSetupStorage();
+  const rawPayload = loadRawFixture('valid-telemetry.json');
+  const topic = 'esniffer/v1/devices/esp32-001/telemetry';
+
+  const result = await processTelemetryMessage(
+    topic,
+    rawPayload,
+    storage,
+    new Date('2026-09-30T07:15:35.000Z')
+  );
+
+  assert.strictEqual(result.status, 'accepted');
+  assert.deepStrictEqual(storage.notedOutcomes, [{ mqttDeviceId: 'esp32-001', outcome: 'stored' }]);
+});
+
+test('INGEST-HEALTH: pesan ditolak mencatat outcome "rejected:<ALASAN>"', async () => {
+  const storage = new MockStorage(); // tanpa device -> DEVICE_UNKNOWN
+  const rawPayload = loadRawFixture('valid-telemetry.json');
+  const topic = 'esniffer/v1/devices/esp32-001/telemetry';
+
+  const result = await processTelemetryMessage(topic, rawPayload, storage);
+
+  assert.strictEqual(result.status, 'rejected');
+  assert.deepStrictEqual(storage.notedOutcomes, [
+    { mqttDeviceId: 'esp32-001', outcome: 'rejected:DEVICE_UNKNOWN' },
+  ]);
+});
+
+test('INGEST-HEALTH: pesan duplikat mencatat outcome "duplicate", topik rusak dicatat "unknown"', async () => {
+  const storage = createSetupStorage();
+  const rawPayload = loadRawFixture('valid-telemetry.json');
+  const topic = 'esniffer/v1/devices/esp32-001/telemetry';
+  const receivedAt = new Date('2026-09-30T07:15:35.000Z');
+
+  await processTelemetryMessage(topic, rawPayload, storage, receivedAt);
+  const res2 = await processTelemetryMessage(topic, rawPayload, storage, receivedAt);
+  assert.strictEqual(res2.status, 'duplicate');
+
+  const resBad = await processTelemetryMessage('topik-rusak-tanpa-format', '{}', storage, receivedAt);
+  assert.strictEqual(resBad.status, 'rejected');
+
+  assert.deepStrictEqual(
+    storage.notedOutcomes.map((n) => n.outcome),
+    ['stored', 'duplicate', 'rejected:TOPIC_MISMATCH']
+  );
+  assert.strictEqual(storage.notedOutcomes[2].mqttDeviceId, 'unknown');
 });

@@ -271,6 +271,30 @@ export class WorkerDaemon {
     }
   }
 
+  /**
+   * Catat nasib pesan yang gugur sebelum pipeline (best-effort, tak pernah
+   * melempar). ID alat diambil dari topik bila bisa diparse, bila tidak
+   * dicatat sebagai "unknown".
+   */
+  private noteIngestOutcome(topic: string, outcome: string): void {
+    let mqttDeviceId = 'unknown';
+    try {
+      mqttDeviceId = parseTopic(topic).deviceId;
+    } catch {
+      // biarkan "unknown"
+    }
+    void this.storage
+      .recordIngestOutcome(mqttDeviceId, outcome, new Date())
+      .catch((err) => {
+        logger.debug({
+          service: 'worker',
+          operation: 'ingest_outcome',
+          outcome: 'note_failed',
+          message: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
   private handleIncomingMessage(
     topic: string,
     payload: Buffer,
@@ -286,6 +310,7 @@ export class WorkerDaemon {
         reason_code: 'QUEUE_CAPACITY_EXCEEDED',
         message: `Worker queue reached maximum capacity (${this.config.maxQueueSize}), dropping incoming message for backpressure`,
       });
+      this.noteIngestOutcome(topic, 'dropped:queue_full');
       return;
     }
 
@@ -336,6 +361,7 @@ export class WorkerDaemon {
         operation: 'topic_invalid',
         topic: topicStr,
       });
+      this.noteIngestOutcome(topicStr, 'dropped:topic_invalid');
       return;
     }
 
