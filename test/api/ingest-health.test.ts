@@ -18,6 +18,8 @@ describe('HTTP API v1: Kesehatan ingest', () => {
   const deviceMqttId = `esp32-${testPrefix}`;
   const ghostMqttId = `hantu-${testPrefix}`;
   let deviceId = '';
+  let chamberId = '';
+  let assignmentId = '';
 
   before(async () => {
     const passwordHash = await hashPassword('AdminPass123!');
@@ -45,6 +47,20 @@ describe('HTTP API v1: Kesehatan ingest', () => {
     });
     deviceId = device.id;
 
+    const chamber = await prisma.chamber.create({
+      data: { code: `CH-${testPrefix}`, name: `Chamber ${testPrefix}`, isActive: true },
+    });
+    chamberId = chamber.id;
+    const assignment = await prisma.deviceAssignment.create({
+      data: {
+        deviceId,
+        chamberId,
+        activeFrom: new Date('2026-09-01T00:00:00Z'),
+        activeUntil: null,
+      },
+    });
+    assignmentId = assignment.id;
+
     const windowStart = hourStart(new Date());
     await prisma.ingestOutcome.createMany({
       data: [
@@ -53,9 +69,45 @@ describe('HTTP API v1: Kesehatan ingest', () => {
         { mqttDeviceId: ghostMqttId, outcome: 'rejected:DEVICE_UNKNOWN', windowStart, count: 2 },
       ],
     });
+
+    // 3 reading berselang 30 dtk, jeda ukur ke simpan 2 dtk (untuk laju)
+    const base = Date.now() - 5 * 60_000;
+    const bootId = '12345678-1234-1234-1234-123456789012';
+    for (let i = 0; i < 3; i++) {
+      const measuredAt = new Date(base + i * 30_000);
+      await prisma.sensorReading.create({
+        data: {
+          deviceId,
+          chamberId,
+          assignmentId,
+          messageId: `health-rate-${testPrefix}-${i}`,
+          payloadSha256: 'a'.repeat(64),
+          bootId,
+          sequence: BigInt(i + 1),
+          historySequence: BigInt(900000 + i),
+          measuredAt,
+          receivedAt: new Date(measuredAt.getTime() + 2_000),
+          measurementTimeQuality: 'SYNCED',
+          temperatureC: 25.5,
+          temperatureQuality: 'OK',
+          humidityPercent: 60.0,
+          humidityQuality: 'OK',
+          mq137Raw: 100.0,
+          mq137Quality: 'OK',
+          mq136Raw: 100.0,
+          mq136Quality: 'OK',
+          mq4Raw: 100.0,
+          mq4Quality: 'OK',
+          rawPayload: {},
+        },
+      });
+    }
   });
 
   after(async () => {
+    await prisma.sensorReading.deleteMany({ where: { deviceId } });
+    await prisma.deviceAssignment.deleteMany({ where: { deviceId } });
+    await prisma.chamber.deleteMany({ where: { id: chamberId } });
     await prisma.ingestOutcome.deleteMany({
       where: { mqttDeviceId: { in: [deviceMqttId, ghostMqttId] } },
     });
@@ -84,8 +136,8 @@ describe('HTTP API v1: Kesehatan ingest', () => {
     assert.strictEqual(entry.outcomes.stored, 10);
     assert.strictEqual(entry.outcomes['rejected:ASSIGNMENT_NOT_FOUND'], 3);
     assert.ok(
-      entry.warnings.some((w: string) => w.includes('tanpa pasangan chamber')),
-      'alat live tanpa assignment wajib diperingatkan'
+      entry.warnings.some((w: string) => w.includes('3 pesan ditolak')),
+      'riwayat penolakan wajib diperingatkan'
     );
 
     const ghost = json.data.unknownSenders.find((s: { mqttDeviceId: string }) => s.mqttDeviceId === ghostMqttId);
@@ -94,6 +146,9 @@ describe('HTTP API v1: Kesehatan ingest', () => {
 
     assert.ok(json.data.totals.stored >= 10);
     assert.ok(json.data.totals.rejected >= 5);
+    assert.strictEqual(entry.rateLast10m.sampleSize, 3);
+    assert.strictEqual(entry.rateLast10m.medianGapMs, 30_000);
+    assert.strictEqual(entry.rateLast10m.medianLagMs, 2_000);
   });
 
   it('3. Param hours dibatasi 1..168', async () => {

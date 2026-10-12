@@ -52,6 +52,53 @@ export async function GET(request: Request): Promise<Response> {
       recentRows.map((r) => [r.deviceId, { count: r._count._all, lastAt: r._max.receivedAt }])
     );
 
+    // Laju kirim alat 10 menit terakhir (alat ukur target 0,5 dtk):
+    // median jeda antar measuredAt + median jeda ukur ke simpan.
+    const tenMinAgo = new Date(now.getTime() - 10 * 60_000);
+    const sampleRows = await prisma.sensorReading.findMany({
+      where: { receivedAt: { gte: tenMinAgo } },
+      select: { deviceId: true, measuredAt: true, receivedAt: true },
+      orderBy: [{ deviceId: 'asc' }, { measuredAt: 'asc' }],
+      take: 5000,
+    });
+    const rateByDevice = new Map<string, { perMinute: number; medianGapMs: number | null; medianLagMs: number | null; sampleSize: number }>();
+    {
+      const byDevice = new Map<string, typeof sampleRows>();
+      for (const row of sampleRows) {
+        const list = byDevice.get(row.deviceId) ?? [];
+        list.push(row);
+        byDevice.set(row.deviceId, list);
+      }
+      const median = (values: number[]): number | null => {
+        if (values.length === 0) return null;
+        const sorted = [...values].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 === 1 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+      };
+      for (const [deviceId, list] of byDevice) {
+        const gaps: number[] = [];
+        const lags: number[] = [];
+        for (let i = 0; i < list.length; i++) {
+          const m = list[i].measuredAt;
+          if (m) {
+            lags.push(list[i].receivedAt.getTime() - m.getTime());
+            const prev = i > 0 ? list[i - 1].measuredAt : null;
+            if (prev) gaps.push(m.getTime() - prev.getTime());
+          }
+        }
+        const spanMin = Math.max(
+          (now.getTime() - Math.max(tenMinAgo.getTime(), list[0].receivedAt.getTime())) / 60_000,
+          1 / 60
+        );
+        rateByDevice.set(deviceId, {
+          perMinute: Math.round((list.length / spanMin) * 10) / 10,
+          medianGapMs: median(gaps),
+          medianLagMs: median(lags),
+          sampleSize: list.length,
+        });
+      }
+    }
+
     const outcomesBySender = new Map<string, Record<string, number>>();
     for (const row of outcomeRows) {
       const entry = outcomesBySender.get(row.mqttDeviceId) ?? {};
@@ -114,6 +161,7 @@ export async function GET(request: Request): Promise<Response> {
         activeChamber: chamber,
         storedLastHour: stored1h,
         lastReceivedAt,
+        rateLast10m: rateByDevice.get(d.id) ?? null,
         outcomes,
         warnings,
       };
