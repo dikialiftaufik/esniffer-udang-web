@@ -249,7 +249,8 @@ describe('HTTP API v1: Latest Reading, Keyset History, and Device Audit Tests', 
     const watermark1 = page1Body.meta.snapshotWatermark;
     assert.ok(watermark1, 'Snapshot watermark harus ada');
 
-    // Simulasikan transaksi baru yang commit SETELAH Halaman 1 dibaca (late-commit di atas watermark)
+    // Simulasikan transaksi baru yang commit SETELAH Halaman 1 dibaca (late-commit di atas watermark).
+    // measuredAt tetap di dalam jendela [from, to] agar yang diuji murni efek watermark, bukan rentang.
     const lateSeq = await allocateHistorySequence();
     const lateReading = await prisma.sensorReading.create({
       data: {
@@ -260,7 +261,7 @@ describe('HTTP API v1: Latest Reading, Keyset History, and Device Audit Tests', 
         payloadSha256: '9'.repeat(64),
         bootId,
         sequence: 99n,
-        measuredAt: new Date(), // Waktu kini
+        measuredAt: new Date(new Date(toStr).getTime() - 500), // Waktu kini
         receivedAt: new Date(),
         measurementTimeQuality: 'SYNCED',
         historySequence: lateSeq, // Sequence di atas watermark
@@ -294,6 +295,12 @@ describe('HTTP API v1: Latest Reading, Keyset History, and Device Audit Tests', 
     // Pastikan late-commit reading TIDAK muncul di tengah traversal pagination
     const allRetrievedIds = [...page1Body.data.map((r: { id: string }) => r.id), ...page2Body.data.map((r: { id: string }) => r.id)];
     assert.ok(!allRetrievedIds.includes(lateReading.id), 'Data di atas snapshot watermark tidak boleh bocor ke traversal');
+
+    // ...tetapi dihitung sebagai antrean di atas watermark agar UI bisa menjelaskannya.
+    assert.ok(
+      page2Body.meta.aboveWatermarkCount >= 1,
+      'Baris di atas watermark wajib terhitung, bukan hilang diam-diam'
+    );
 
     // Halaman 3 (sisa reading)
     const page3Req = new Request(

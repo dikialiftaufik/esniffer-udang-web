@@ -6,7 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { toHistoryRow, toHistoryRows, nextCursorOf } from '../lib/api/history.ts';
+import { toHistoryRow, toHistoryRows, nextCursorOf, historyMetaOf } from '../lib/api/history.ts';
 
 function apiRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -98,4 +98,17 @@ test('History: entri rusak dilewati, payload bukan array jadi kosong', () => {
       measurementTimeQuality: 'UNKNOWN',
     },
   ]);
+});
+
+test('History: meta watermark dibaca, payload rusak jadi nilai kosong', () => {
+  assert.deepStrictEqual(historyMetaOf({ data: [], meta: { snapshotWatermark: '42', aboveWatermarkCount: 3 } }), {
+    snapshotWatermark: '42',
+    aboveWatermarkCount: 3,
+  });
+  assert.deepStrictEqual(historyMetaOf({}), { snapshotWatermark: null, aboveWatermarkCount: 0 });
+  assert.deepStrictEqual(historyMetaOf(null), { snapshotWatermark: null, aboveWatermarkCount: 0 });
+  assert.deepStrictEqual(historyMetaOf({ meta: { snapshotWatermark: 42, aboveWatermarkCount: 'tiga' } }), {
+    snapshotWatermark: null,
+    aboveWatermarkCount: 0,
+  });
 });

@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '../auth/AuthProvider';
-import { toHistoryRows, nextCursorOf, type HistoryRow } from '../../lib/api/history.ts';
+import { toHistoryRows, nextCursorOf, historyMetaOf, type HistoryRow } from '../../lib/api/history.ts';
 
 interface ExportPanelProps {
   chamberId?: string;
@@ -30,6 +30,10 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [watermark, setWatermark] = useState<string | null>(null);
+  const [aboveCount, setAboveCount] = useState(0);
+  // Halaman keyset saat ini (ref: hanya penjaga refresh, tak dirender).
+  const historyPageRef = useRef(1);
 
   const getRangeBounds = () => {
     const now = new Date();
@@ -87,7 +91,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
     }
   };
 
-  const fetchHistoryPage = async (cursorToken?: string | null) => {
+  const fetchHistoryPage = async (cursorToken?: string | null, page = 1) => {
     setIsHistoryLoading(true);
     setHistoryError(null);
 
@@ -113,6 +117,10 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
       const json: unknown = await res.json();
       setHistoryRows(toHistoryRows(json));
       setNextCursor(nextCursorOf(json));
+      const meta = historyMetaOf(json);
+      setWatermark(meta.snapshotWatermark);
+      setAboveCount(meta.aboveWatermarkCount);
+      historyPageRef.current = page;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Gagal memuat riwayat data';
       setHistoryError(msg);
@@ -123,8 +131,26 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
 
   const handleOpenHistory = () => {
     setShowHistory(true);
-    fetchHistoryPage(null);
+    setHistoryRows([]);
+    setNextCursor(null);
+    setWatermark(null);
+    setAboveCount(0);
+    historyPageRef.current = 1;
+    fetchHistoryPage(null, 1);
   };
+
+  // Refresh otomatis tiap 10 dtk selagi modal terbuka di halaman pertama.
+  // Halaman lanjut tidak disentuh agar posisi baca tak melompat.
+  useEffect(() => {
+    if (!showHistory) return;
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (historyPageRef.current !== 1) return;
+      void fetchHistoryPage(null, 1);
+    }, 10000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showHistory, resolvedChamberId, rangeParam, activeDeviceId]);
 
   return (
     <>
@@ -214,7 +240,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                   Riwayat Telemetri ({resolvedChamberId})
                 </h3>
                 <span className="text-xs font-mono text-white/60">
-                  Rentang: {rangeParam} | Paginasi Keyset Aman
+                  Rentang: {rangeParam} | Watermark #{watermark ?? '—'}
                 </span>
               </div>
               <button
@@ -230,6 +256,16 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
             {historyError && (
               <div className="my-3 p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-mono">
                 {historyError}
+              </div>
+            )}
+
+            {aboveCount > 0 && (
+              <div
+                role="status"
+                className="my-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs font-mono"
+              >
+                {aboveCount} data terbaru menunggu giliran (di atas watermark) dan ikut tabel
+                berikutnya. Sudah tampil di grafik. Bukan data hilang.
               </div>
             )}
 
@@ -256,7 +292,9 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                   ) : historyRows.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="p-8 text-center text-white/50">
-                        Tidak ada riwayat pembacaan dalam rentang ini.
+                        {aboveCount > 0
+                          ? 'Belum ada baris di bawah watermark. Data terbaru menunggu giliran di atas.'
+                          : 'Tidak ada riwayat pembacaan dalam rentang ini.'}
                       </td>
                     </tr>
                   ) : (
@@ -298,9 +336,18 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
               </span>
               <div className="flex gap-2">
                 <button
+                  disabled={isHistoryLoading}
+                  onClick={() => {
+                    fetchHistoryPage(null, 1);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/20 text-white/90 text-xs font-mono font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                >
+                  Muat ulang
+                </button>
+                <button
                   disabled={!nextCursor || isHistoryLoading}
                   onClick={() => {
-                    fetchHistoryPage(nextCursor);
+                    fetchHistoryPage(nextCursor, 2);
                   }}
                   className="px-4 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-mono font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                 >
