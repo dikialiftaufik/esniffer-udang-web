@@ -195,8 +195,14 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale =
   }, [resolvedChamberId, activeRange, apiFetch, retryCount, pinned]);
 
   // Tempel tick SSE sebagai ekor mentah (diabaikan saat jendela tersemat).
-  const pinnedActive = pinned !== null && pinned.chamberId === resolvedChamberId;
-  if (streamTick && streamTick.measuredAt !== tailState.at && !pinnedActive) {
+  const pinnedWindow = pinned !== null && pinned.chamberId === resolvedChamberId ? pinned : null;
+  // Alat kembali online selagi jendela tersemat: tick lebih baru dari
+  // jendela berarti data live mengalir lagi, lepas pin agar status
+  // kembali Live sendiri tanpa perlu tombol.
+  if (pinnedWindow && streamTick && streamTick.measuredAt > pinnedWindow.to) {
+    setPinned(null);
+  }
+  if (streamTick && streamTick.measuredAt !== tailState.at && !pinnedWindow) {
     const tickTime = new Date(streamTick.measuredAt).getTime();
     if (!Number.isNaN(tickTime)) {
       const d = new Date(streamTick.measuredAt);
@@ -259,7 +265,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale =
           </div>
 
           {/* Live / Riwayat Indicator: denyut hanya saat benar-benar live */}
-          {isStale || pinned ? (
+          {isStale || pinnedWindow ? (
             <div className="flex items-center gap-1.5 pl-1">
               <span className="flex h-2.5 w-2.5 relative">
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400"></span>
