@@ -139,7 +139,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
             </span>
           </div>
           <p className="text-xs text-white/60 font-mono mb-4 leading-relaxed">
-            Unduh telemetri CSV atau buka tabel riwayat tersinkronisasi.
+            CSV dan riwayat diambil dari database. Tetap bisa diunduh saat alat mati.
           </p>
 
           {exportError && (

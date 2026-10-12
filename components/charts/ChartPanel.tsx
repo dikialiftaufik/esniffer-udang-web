@@ -26,6 +26,10 @@ interface SensorChartPoint {
 
 interface ChartPanelProps {
   chamberId: string;
+  /** Waktu ukur terakhir (ISO) dari endpoint latest. Null bila belum pernah ada data. */
+  lastMeasuredAt?: string | null;
+  /** True bila data terakhir basi (alat offline). Indikator Live diganti label Riwayat. */
+  isStale?: boolean;
 }
 
 const RANGE_DURATIONS: Record<TimeRange, number> = {
@@ -35,7 +39,7 @@ const RANGE_DURATIONS: Record<TimeRange, number> = {
   '24h': 24 * 60 * 60 * 1000,
 };
 
-export default function ChartPanel({ chamberId }: ChartPanelProps) {
+export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale = false }: ChartPanelProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -53,13 +57,30 @@ export default function ChartPanel({ chamberId }: ChartPanelProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
+  /**
+   * Jendela data terakhir yang disematkan (mode riwayat): {chamberId, from, to}
+   * ISO. Null = jendela live (sekarang minus durasi rentang). Menyimpan
+   * chamberId agar sematan chamber lain tak pernah dipakai.
+   */
+  const [pinned, setPinned] = useState<{ chamberId: string; from: string; to: string } | null>(null);
+
   const isMountedRef = useRef(true);
 
   const handleRangeChange = (newRange: TimeRange) => {
     if (newRange === activeRange) return;
+    setPinned(null);
     const params = new URLSearchParams(searchParams.toString());
     params.set('range', newRange);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
+  /** Sematkan jendela yang berakhir di data terakhir (dipakai tombol "data terakhir"). */
+  const pinToLastData = () => {
+    if (!lastMeasuredAt) return;
+    const end = new Date(lastMeasuredAt).getTime();
+    const from = new Date(end - RANGE_DURATIONS[activeRange]).toISOString();
+    setIsLoading(true);
+    setPinned({ chamberId: resolvedChamberId, from, to: lastMeasuredAt });
   };
 
   const [retryCount, setRetryCount] = useState(0);
@@ -72,14 +93,17 @@ export default function ChartPanel({ chamberId }: ChartPanelProps) {
     const loadSeries = async () => {
       if (!resolvedChamberId) return;
 
+      const usePinned = pinned && pinned.chamberId === resolvedChamberId ? pinned : null;
       const durationMs = RANGE_DURATIONS[activeRange];
       const now = new Date();
       const from = new Date(now.getTime() - durationMs);
+      const windowFrom = usePinned ? usePinned.from : from.toISOString();
+      const windowTo = usePinned ? usePinned.to : now.toISOString();
 
       try {
         const query = new URLSearchParams({
-          from: from.toISOString(),
-          to: now.toISOString(),
+          from: windowFrom,
+          to: windowTo,
           bucket: 'auto',
           metrics: 'mq137Raw,mq136Raw,mq4Raw',
         });
@@ -139,8 +163,10 @@ export default function ChartPanel({ chamberId }: ChartPanelProps) {
 
     void loadSeries();
 
-    // Refresh every 10 seconds for live mode without UI flicker
+    // Refresh every 10 seconds for live mode without UI flicker.
+    // Jendela tersemat (mode riwayat) statis: tidak perlu refresh.
     const intervalId = setInterval(() => {
+      if (pinned) return;
       if (typeof document !== 'undefined' && !document.hidden && !isCancelled) {
         void loadSeries();
       }
@@ -151,7 +177,7 @@ export default function ChartPanel({ chamberId }: ChartPanelProps) {
       isMountedRef.current = false;
       clearInterval(intervalId);
     };
-  }, [resolvedChamberId, activeRange, apiFetch, retryCount]);
+  }, [resolvedChamberId, activeRange, apiFetch, retryCount, pinned]);
 
   return (
     <div className="md:col-span-2 bg-white/10 backdrop-blur-lg border border-white/20 rounded-2xl flex flex-col shadow-[0_8px_32px_0_rgba(0,0,0,0.3)] p-6">
@@ -184,16 +210,27 @@ export default function ChartPanel({ chamberId }: ChartPanelProps) {
             ))}
           </div>
 
-          {/* Live Indicator */}
-          <div className="flex items-center gap-1.5 pl-1">
-            <span className="flex h-2.5 w-2.5 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500"></span>
-            </span>
-            <span className="text-[10px] font-mono text-cyan-300 font-bold uppercase tracking-widest">
-              Live
-            </span>
-          </div>
+          {/* Live / Riwayat Indicator: denyut hanya saat benar-benar live */}
+          {isStale || pinned ? (
+            <div className="flex items-center gap-1.5 pl-1">
+              <span className="flex h-2.5 w-2.5 relative">
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400"></span>
+              </span>
+              <span className="text-[10px] font-mono text-amber-300 font-bold uppercase tracking-widest">
+                Riwayat
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 pl-1">
+              <span className="flex h-2.5 w-2.5 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500"></span>
+              </span>
+              <span className="text-[10px] font-mono text-cyan-300 font-bold uppercase tracking-widest">
+                Live
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -223,8 +260,33 @@ export default function ChartPanel({ chamberId }: ChartPanelProps) {
             </button>
           </div>
         ) : chartData.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-white/40 font-mono text-sm">
-            Tidak ada data sensor pada rentang {activeRange}.
+          <div className="flex flex-col items-center justify-center h-full text-white/40 font-mono text-sm gap-3 p-4 text-center">
+            {pinned && pinned.chamberId === resolvedChamberId ? (
+              <>
+                <span>Tidak ada data sensor di jendela data terakhir ini.</span>
+                <button
+                  onClick={() => setPinned(null)}
+                  className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-white font-mono text-xs"
+                >
+                  Kembali live
+                </button>
+              </>
+            ) : lastMeasuredAt ? (
+              <>
+                <span>
+                  Tidak ada data sensor pada rentang {activeRange}. Data terakhir tercatat{' '}
+                  {new Date(lastMeasuredAt).toLocaleString('id-ID')}.
+                </span>
+                <button
+                  onClick={pinToLastData}
+                  className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-white font-mono text-xs"
+                >
+                  Tampilkan data terakhir
+                </button>
+              </>
+            ) : (
+              <span>Tidak ada data sensor pada rentang {activeRange}.</span>
+            )}
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
@@ -307,6 +369,25 @@ export default function ChartPanel({ chamberId }: ChartPanelProps) {
           </ResponsiveContainer>
         )}
       </div>
+
+      {/* Footer: legenda baca + bar mode riwayat */}
+      {pinned && pinned.chamberId === resolvedChamberId ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2">
+          <span className="text-[11px] font-mono text-amber-200">
+            Jendela data terakhir (bukan live).
+          </span>
+          <button
+            onClick={() => setPinned(null)}
+            className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-white font-mono text-xs"
+          >
+            Kembali live
+          </button>
+        </div>
+      ) : (
+        <p className="mt-3 text-[10px] font-mono text-white/40">
+          -- berarti tidak ada data. Garis terputus berarti tidak ada kiriman alat.
+        </p>
+      )}
     </div>
   );
 }

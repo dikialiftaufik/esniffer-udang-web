@@ -190,6 +190,19 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Banner mode riwayat: eksplisit saat data terakhir basi */}
+      {liveFreshnessState === 'stale' && reading?.measuredAt && (
+        <div
+          role="status"
+          className="px-6 py-3 rounded-2xl bg-amber-500/10 backdrop-blur-md border border-amber-500/30 shadow-sm"
+        >
+          <p className="text-xs font-mono text-amber-200">
+            Mode riwayat — alat offline sejak {new Date(reading.measuredAt).toLocaleString('id-ID')}.
+            Menampilkan data terakhir yang tersimpan.
+          </p>
+        </div>
+      )}
+
       {/* Main Grid: Metrics, Chart, and Export */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 min-h-[550px]">
         {/* Metric Cards */}
@@ -216,7 +229,11 @@ export default function Dashboard() {
         </div>
 
         {/* Time-series Chart */}
-        <ChartPanel chamberId={resolvedChamberId || rawChamberId || 'CH-01'} />
+        <ChartPanel
+          chamberId={resolvedChamberId || rawChamberId || 'CH-01'}
+          lastMeasuredAt={reading?.measuredAt ?? null}
+          isStale={liveFreshnessState === 'stale'}
+        />
 
         {/* CSV Export & History Panel */}
         <ExportPanel
