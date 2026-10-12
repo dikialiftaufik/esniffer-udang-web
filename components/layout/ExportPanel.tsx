@@ -140,6 +140,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
           </div>
           <p className="text-xs text-white/60 font-mono mb-4 leading-relaxed">
             CSV dan riwayat diambil dari database. Tetap bisa diunduh saat alat mati.
+            Data yang baru masuk detik ini ikut unduhan berikutnya.
           </p>
 
           {exportError && (

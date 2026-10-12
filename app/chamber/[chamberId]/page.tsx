@@ -7,6 +7,7 @@ import ChartPanel from '../../../components/charts/ChartPanel';
 import ExportPanel from '../../../components/layout/ExportPanel';
 import SensorCard from '../../../components/ui/SensorCard';
 import { useChamberLatest } from '../../../hooks/useChamberLatest';
+import { useAuth } from '../../../components/auth/AuthProvider';
 
 const FRESHNESS_THRESHOLD_SECONDS = 15;
 
@@ -34,6 +35,41 @@ export default function Dashboard() {
   const [liveAgeSeconds, setLiveAgeSeconds] = useState<number | null>(null);
   const tickerRef = useRef<NodeJS.Timeout | null>(null);
   const measuredAtRef = useRef<string | null>(null);
+
+  // Peringatan alat tanpa pasangan chamber (pesannya ditolak worker).
+  // Dibaca dari endpoint kesehatan ingest agar tidak diam-diam hilang.
+  const [ingestWarn, setIngestWarn] = useState<string | null>(null);
+  const { apiFetch } = useAuth();
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch('/api/v1/ingest/health?hours=24')
+      .then(async (res) => {
+        if (!res.ok || cancelled) return;
+        const json = await res.json().catch(() => null);
+        const devices = Array.isArray(json?.data?.devices) ? json.data.devices : [];
+        const senders = Array.isArray(json?.data?.unknownSenders) ? json.data.unknownSenders : [];
+        let dropped = 0;
+        for (const d of devices) {
+          const n = d?.outcomes?.['rejected:ASSIGNMENT_NOT_FOUND'];
+          if (typeof n === 'number') dropped += n;
+        }
+        for (const s of senders) {
+          for (const c of Object.values(s?.outcomes ?? {})) {
+            if (typeof c === 'number') dropped += c;
+          }
+        }
+        if (!cancelled && dropped > 0) {
+          setIngestWarn(
+            `Ada alat mengirim tanpa pasangan chamber (${dropped} pesan ditolak 24 jam terakhir). Minta teknisi memasangkan alat ke chamber.`
+          );
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [apiFetch]);
 
   useEffect(() => {
     // Stop any previous ticker
@@ -190,9 +226,18 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Banner mode riwayat: eksplisit saat data terakhir basi */}
-      {liveFreshnessState === 'stale' && reading?.measuredAt && (
+      {/* Peringatan ingest: alat tanpa pasangan chamber */}
+      {ingestWarn && (
         <div
+          role="alert"
+          className="px-6 py-3 rounded-2xl bg-rose-500/10 backdrop-blur-md border border-rose-500/30 shadow-sm"
+        >
+          <p className="text-xs font-mono text-rose-200">{ingestWarn}</p>
+        </div>
+      )}
+
+      {/* Banner mode riwayat: eksplisit saat data terakhir basi */}
+      {liveFreshnessState === 'stale' && reading?.measuredAt && (        <div
           role="status"
           className="px-6 py-3 rounded-2xl bg-amber-500/10 backdrop-blur-md border border-amber-500/30 shadow-sm"
         >

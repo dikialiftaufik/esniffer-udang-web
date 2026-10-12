@@ -846,7 +846,9 @@ export default function BatchDetailPage() {
                   Start Sesi
                 </button>
                 <p className="w-full text-[11px] font-mono text-white/45">
-                  Isi chamber + device agar data sensor otomatis tertaut ke sesi (kosong = sesi tanpa data).
+                  {chSel[g.groupId] || devSel[g.groupId]
+                    ? 'Chamber + device terisi: data sensor otomatis tertaut ke sesi.'
+                    : 'Chamber + device kosong: sesi ini tidak akan punya data sensor.'}
                 </p>
               </div>
             )}
