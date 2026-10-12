@@ -9,12 +9,20 @@ import {
   transportDurationMs,
   wibInputToUtc,
   MAX_BATCH_PHOTOS,
+  MAX_PHOTO_CAPTION_LENGTH,
   DatasetValidationError,
 } from '../../../shared/dataset.ts';
 import SuccessNotice, { useSuccessNotice } from '../../../components/ui/SuccessNotice';
 
 const fieldCls = 'flex flex-col gap-1.5';
 const labelCls = 'text-[13px] font-mono font-semibold text-white/85';
+// Penanda visual field wajib (bintang merah, disembunyikan dari pembaca layar;
+// inputnya sendiri memakai aria-required).
+const reqMark = (
+  <span aria-hidden="true" className="text-rose-400">
+    {' *'}
+  </span>
+);
 const hintCls = 'text-xs font-mono text-white/70';
 const inputCls =
   'w-full px-3 py-2.5 rounded-xl bg-black/25 border border-white/10 text-sm font-mono text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-400/60 focus-visible:ring-2 focus-visible:ring-emerald-400/50 [color-scheme:dark] [tabular-nums]';
@@ -38,17 +46,17 @@ const AUTO_FILL_ENABLED = true;
 interface GroupForm {
   labTempC: string;
   visualCheck: string;
-  labWeightG: string;
+  labWeightBeforeG: string;
+  labWeightAfterG: string;
   sampleShrimpCount: string;
-  sampleWeightG: string;
 }
 
 const emptyGroup = (): GroupForm => ({
   labTempC: '',
   visualCheck: 'normal',
-  labWeightG: '',
+  labWeightBeforeG: '',
+  labWeightAfterG: '',
   sampleShrimpCount: '4',
-  sampleWeightG: '',
 });
 
 const durationFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
@@ -85,82 +93,37 @@ export default function NewBatchPage() {
   const [marketSource, setMarketSource] = useState('');
   const [sourceType, setSourceType] = useState('market');
   const [shrimpCount, setShrimpCount] = useState('12');
-  const [sizeGrade, setSizeGrade] = useState('');
+  const [shrimpLengthCm, setShrimpLengthCm] = useState('');
   const [totalWeightG, setTotalWeightG] = useState('');
-  const [initialCondition, setInitialCondition] = useState('fresh_dead');
+  const [initialCondition, setInitialCondition] = useState('dead');
   const [initialTempC, setInitialTempC] = useState('');
-  // Tahap B — transportasi
-  const [departedAt, setDepartedAt] = useState('');
+  // Tahap A — pengadaan (termasuk cool box dan tiba, pindahan tahap B)
   const [arrivedAt, setArrivedAt] = useState('');
   const [coolerMin, setCoolerMin] = useState('');
   const [coolerMax, setCoolerMax] = useState('');
-  const [tempStart, setTempStart] = useState('');
-  const [tempEnd, setTempEnd] = useState('');
   const [deviationAck, setDeviationAck] = useState(false);
   // Foto kondisi awal (diunggah setelah batch dibuat)
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
+  const [photoCaptions, setPhotoCaptions] = useState<string[]>([]);
   const [createdBatchId, setCreatedBatchId] = useState<string | null>(null);
   // Tahap C — grup SR/SD
   const [groupSR, setGroupSR] = useState<GroupForm>(emptyGroup());
   const [groupSD, setGroupSD] = useState<GroupForm>(emptyGroup());
 
-  // Berat di lab & suhu tusuk saat tiba selalu sama di kedua kartu (diukur
-  // sekali sebelum dibagi): kartu pertama yang disentuh menyalin ke kartu
-  // satunya; begitu kartu kedua disentuh manual, keduanya independen.
-  const [labSource, setLabSource] = useState<'sr' | 'sd' | null>(null);
-  const [labTempTouched, setLabTempTouched] = useState({ sr: false, sd: false });
   const setSR = (v: GroupForm) => {
-    if (v.labWeightG !== groupSR.labWeightG) {
-      if (labSource !== 'sd') {
-        setGroupSD((prev) => ({ ...prev, labWeightG: v.labWeightG }));
-      }
-      setLabSource('sr');
-    }
-    if (v.labTempC !== groupSR.labTempC) {
-      setLabTempTouched((prev) => ({ ...prev, sr: true }));
-    }
     setGroupSR(v);
   };
   const setSD = (v: GroupForm) => {
-    if (v.labWeightG !== groupSD.labWeightG) {
-      if (labSource !== 'sr') {
-        setGroupSR((prev) => ({ ...prev, labWeightG: v.labWeightG }));
-      }
-      setLabSource('sd');
-    }
-    if (v.labTempC !== groupSD.labTempC) {
-      setLabTempTouched((prev) => ({ ...prev, sd: true }));
-    }
     setGroupSD(v);
   };
 
-  // Suhu awal udang = suhu awal transportasi (masuk box segera setelah beli):
-  // tersalin hidup selama kolom transportasi belum disentuh manual.
-  const [tempStartTouched, setTempStartTouched] = useState(false);
   const changeInitialTempC = (v: string) => {
     setInitialTempC(v);
-    if (!tempStartTouched) {
-      setTempStart(v);
-    }
-  };
-  const changeTempStart = (v: string) => {
-    setTempStartTouched(true);
-    setTempStart(v);
-  };
-  // Suhu akhir transportasi = suhu tusuk saat tiba (kedua kartu, sampai disentuh).
-  const changeTempEnd = (v: string) => {
-    setTempEnd(v);
-    if (!labTempTouched.sr) {
-      setGroupSR((g) => ({ ...g, labTempC: v }));
-    }
-    if (!labTempTouched.sd) {
-      setGroupSD((g) => ({ ...g, labTempC: v }));
-    }
   };
 
   /**
-   * Isi seluruh form (pengadaan → transportasi → kelompok) dengan
+   * Isi seluruh form (pengadaan → kelompok) dengan
    * nilai yang realistis dan saling konsisten, agar alur fitur
    * bisa diuji tanpa mengetar satu per satu. Foto tidak diisi:
    * file asli tidak bisa dibuang-buang, jadi tetap dipilih manual.
@@ -168,14 +131,11 @@ export default function NewBatchPage() {
   const fillTestData = () => {
     // Tanggal kalender WIB hari ini (UTC+7).
     const wibDate = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
-    // Berangkat dari lab 06:15 → beli di pasar 07:20 (dalam jendela
-    // 06:00–08:00) → tiba kembali di lab 07:55 (perjalanan 1j40).
+    // Beli di pasar 07:20 (dalam jendela 06:00–08:00) → tiba kembali
+    // di lab 07:55 (perjalanan 35 menit).
     const procured = `${wibDate}T07:20`;
 
-    // Isi ulang berarti mengganti seluruh form, jadi flag mirror direset.
-    setTempStartTouched(false);
-    setLabTempTouched({ sr: false, sd: false });
-    setLabSource(null);
+    // Isi ulang berarti mengganti seluruh form.
     setDeviationAck(false);
 
     // Tahap A — pengadaan
@@ -183,31 +143,28 @@ export default function NewBatchPage() {
     setMarketSource('Pasar Ciroyom');
     setSourceType('market');
     setShrimpCount('12');
-    setSizeGrade('25'); // 12 ekor / 480 g → 25 ekor per kg
+    setShrimpLengthCm('12.5'); // panjang representatif saat beli
     setTotalWeightG('480');
-    setInitialCondition('fresh_dead');
+    setInitialCondition('dead');
     setInitialTempC('8.5'); // udang baru dibeli, masih ada esnya
-    // Tahap B — transportasi
-    setDepartedAt(`${wibDate}T06:15`);
+    // Tiba di lab (bagian pengadaan)
     setArrivedAt(`${wibDate}T07:55`);
     setCoolerMin('1.2');
     setCoolerMax('3.6');
-    setTempStart('8.5');
-    setTempEnd('6.4'); // suhu tusuk saat tiba di lab
     // Tahap C — kelompok SR (suhu ruang) dan SD (dingin)
     setGroupSR({
       labTempC: '6.4',
       visualCheck: 'normal',
-      labWeightG: '472',
+      labWeightBeforeG: '472',
+      labWeightAfterG: '468.5',
       sampleShrimpCount: '4',
-      sampleWeightG: '158',
     });
     setGroupSD({
       labTempC: '6.4',
       visualCheck: 'normal',
-      labWeightG: '472',
+      labWeightBeforeG: '472',
+      labWeightAfterG: '469.2',
       sampleShrimpCount: '4',
-      sampleWeightG: '156',
     });
     setFieldErrors({});
     notify('Form terisi data tes — periksa dulu sebelum Simpan batch.');
@@ -226,8 +183,8 @@ export default function NewBatchPage() {
   }, [error]);
 
   const durationHours =
-    departedAt && arrivedAt
-      ? (new Date(arrivedAt).getTime() - new Date(departedAt).getTime()) / 3_600_000
+    procuredAt && arrivedAt
+      ? (new Date(arrivedAt).getTime() - new Date(procuredAt).getTime()) / 3_600_000
       : null;
   const overDuration = durationHours !== null && durationHours > 3;
 
@@ -252,11 +209,11 @@ export default function NewBatchPage() {
     } else if (!Number.isInteger(count) || count < 10) {
       e.shrimpCount = 'Minimal 10 ekor (bilangan bulat).';
     }
-    const size = toNum(sizeGrade);
-    if (size === null) {
-      e.sizeGrade = 'Wajib diisi.';
-    } else if (!Number.isInteger(size) || size < 1) {
-      e.sizeGrade = 'Minimal 1 ekor/kg (bilangan bulat).';
+    const len = toNum(shrimpLengthCm);
+    if (len === null) {
+      e.shrimpLengthCm = 'Wajib diisi.';
+    } else if (!(len >= 1 && len <= 50)) {
+      e.shrimpLengthCm = 'Harus 1 sampai 50 cm.';
     }
     const w = toNum(totalWeightG);
     if (w === null) {
@@ -270,28 +227,15 @@ export default function NewBatchPage() {
     } else if (t < -2 || t > 30) {
       e.initialTempC = 'Harus -2 sampai 30 °C.';
     }
-    return e;
-  };
-
-  const validateStepB = (): Errors => {
-    const e: Errors = {};
-    const dep = parseWib(departedAt);
+    // Tiba di lab + cool box (pindahan tahap B): cukup beli dan tiba.
     const arr = parseWib(arrivedAt);
-    if (dep.error) {
-      e.departedAt = dep.error;
-    }
     if (arr.error) {
       e.arrivedAt = arr.error;
-    }
-    if (!dep.error && !arr.error) {
+    } else {
       const proc = parseWib(procuredAt);
-      if (!proc.error && transportDurationMs(dep.date!, proc.date!) <= 0) {
-        e.departedAt = 'Waktu berangkat (dari lab) harus sebelum waktu beli udang di pasar.';
-      } else if (!proc.error && transportDurationMs(proc.date!, arr.date!) <= 0) {
-        e.arrivedAt = 'Waktu tiba di lab harus setelah waktu beli udang.';
-      } else if (transportDurationMs(dep.date!, arr.date!) < 0) {
-        e.arrivedAt = 'Waktu tiba harus setelah waktu berangkat.';
-      } else if (!isColdChainCompliant(dep.date!, arr.date!) && !deviationAck) {
+      if (!proc.error && transportDurationMs(proc.date!, arr.date!) <= 0) {
+        e.arrivedAt = 'Tanggal dan jam tiba harus setelah tanggal dan jam beli.';
+      } else if (!proc.error && !isColdChainCompliant(proc.date!, arr.date!) && !deviationAck) {
         e.arrivedAt = 'Melebihi 3 jam — centang deviasi di bawah untuk lanjut.';
       }
     }
@@ -307,12 +251,6 @@ export default function NewBatchPage() {
     } else if (cmax < 0 || cmax > 4) {
       e.coolerMax = 'Harus 0–4 °C.';
     }
-    if (toNum(tempStart) === null) {
-      e.tempStart = 'Wajib diisi.';
-    }
-    if (toNum(tempEnd) === null) {
-      e.tempEnd = 'Wajib diisi.';
-    }
     return e;
   };
 
@@ -327,23 +265,23 @@ export default function NewBatchPage() {
     if (g.visualCheck.trim() === '') {
       e[`${prefix}-visualCheck`] = 'Wajib dipilih.';
     }
-    const lw = toNum(g.labWeightG);
-    if (lw === null) {
-      e[`${prefix}-labWeightG`] = 'Wajib diisi.';
-    } else if (!(lw > 0)) {
-      e[`${prefix}-labWeightG`] = 'Harus lebih dari 0.';
+    const lwBefore = toNum(g.labWeightBeforeG);
+    if (lwBefore === null) {
+      e[`${prefix}-labWeightBeforeG`] = 'Wajib diisi.';
+    } else if (!(lwBefore > 0)) {
+      e[`${prefix}-labWeightBeforeG`] = 'Harus lebih dari 0.';
+    }
+    const lwAfter = toNum(g.labWeightAfterG);
+    if (lwAfter === null) {
+      e[`${prefix}-labWeightAfterG`] = 'Wajib diisi.';
+    } else if (!(lwAfter > 0)) {
+      e[`${prefix}-labWeightAfterG`] = 'Harus lebih dari 0.';
     }
     const c = toNum(g.sampleShrimpCount);
     if (c === null) {
       e[`${prefix}-sampleShrimpCount`] = 'Wajib diisi.';
     } else if (!Number.isInteger(c) || c < 3 || c > 5) {
       e[`${prefix}-sampleShrimpCount`] = 'Harus 3–5 ekor.';
-    }
-    const sw = toNum(g.sampleWeightG);
-    if (sw === null) {
-      e[`${prefix}-sampleWeightG`] = 'Wajib diisi.';
-    } else if (!(sw > 0)) {
-      e[`${prefix}-sampleWeightG`] = 'Harus lebih dari 0.';
     }
     return e;
   };
@@ -353,7 +291,7 @@ export default function NewBatchPage() {
     ...validateGroup('sd', groupSD),
   });
 
-  const validators = [validateStepA, validateStepB, validateStepC];
+  const validators = [validateStepA, validateStepC];
 
   const focusFirstError = (errs: Errors) => {
     const first = Object.keys(errs)[0];
@@ -376,21 +314,6 @@ export default function NewBatchPage() {
         setStep(i);
         focusFirstError(errs);
         return;
-      }
-    }
-    // Suhu awal udang (dibeli lalu langsung masuk box) = suhu awal transportasi:
-    // praktis satu pembacaan fisik, jadi cukup isi sekali lalu tersalin.
-    if (next >= 1 && tempStart.trim() === '' && initialTempC.trim() !== '') {
-      setTempStart(initialTempC);
-    }
-    // Suhu akhir transportasi (udang tiba di lab) = suhu tusuk saat tiba:
-    // praktis satu pembacaan, jadi cukup isi sekali lalu tersalin ke tiap kartu.
-    if (next >= 2 && tempEnd.trim() !== '') {
-      if (groupSR.labTempC.trim() === '') {
-        setGroupSR((prev) => ({ ...prev, labTempC: tempEnd }));
-      }
-      if (groupSD.labTempC.trim() === '') {
-        setGroupSD((prev) => ({ ...prev, labTempC: tempEnd }));
       }
     }
     setFieldErrors({});
@@ -440,6 +363,7 @@ export default function NewBatchPage() {
     }
     setPhotoFiles((prev) => [...prev, ...accepted]);
     setPhotoPreviews((prev) => [...prev, ...accepted.map((f) => URL.createObjectURL(f))]);
+    setPhotoCaptions((prev) => [...prev, ...accepted.map(() => '')]);
     input.value = '';
   };
 
@@ -447,6 +371,7 @@ export default function NewBatchPage() {
     URL.revokeObjectURL(photoPreviews[index]);
     setPhotoFiles((prev) => prev.filter((_, i) => i !== index));
     setPhotoPreviews((prev) => prev.filter((_, i) => i !== index));
+    setPhotoCaptions((prev) => prev.filter((_, i) => i !== index));
   };
 
   const uploadPhotos = async (batchId: string) => {
@@ -454,6 +379,7 @@ export default function NewBatchPage() {
     for (const f of photoFiles) {
       form.append('photos', f);
     }
+    form.append('captions', JSON.stringify(photoCaptions));
     const res = await apiFetch(`/api/v1/batches/${encodeURIComponent(batchId)}/photos`, {
       method: 'POST',
       body: form,
@@ -478,15 +404,19 @@ export default function NewBatchPage() {
   };
 
   const handleSubmit = async () => {
-    const errs = { ...validateStepA(), ...validateStepB(), ...validateStepC() };
+    const errs = { ...validateStepA(), ...validateStepC() };
+    const badCaption = photoFiles.length > 0
+      ? photoCaptions.findIndex((c) => c.trim() === '' || c.trim().length > MAX_PHOTO_CAPTION_LENGTH)
+      : -1;
+    if (badCaption >= 0) {
+      errs.photos = `Caption foto ke-${badCaption + 1} wajib diisi (maks ${MAX_PHOTO_CAPTION_LENGTH} karakter).`;
+    }
     if (Object.keys(errs).length > 0) {
       setFieldErrors(errs);
       const stepOf = (k: string) =>
-        ['procuredAt', 'marketSource', 'shrimpCount', 'sizeGrade', 'totalWeightG', 'initialTempC'].includes(k)
+        ['procuredAt', 'marketSource', 'shrimpCount', 'shrimpLengthCm', 'totalWeightG', 'initialTempC', 'photos', 'arrivedAt', 'coolerMin', 'coolerMax'].includes(k)
           ? 0
-          : ['departedAt', 'arrivedAt', 'coolerMin', 'coolerMax', 'tempStart', 'tempEnd'].includes(k)
-            ? 1
-            : 2;
+          : 1;
       setStep(stepOf(Object.keys(errs)[0]));
       focusFirstError(errs);
       return;
@@ -499,25 +429,22 @@ export default function NewBatchPage() {
         marketSource: marketSource.trim(),
         sourceType,
         shrimpCount: Number(shrimpCount),
-        sizeGrade: Number(sizeGrade),
+        shrimpLengthCm: Number(shrimpLengthCm),
         totalWeightG: Number(totalWeightG),
         initialCondition,
         initialTempC: Number(initialTempC),
-        departedAtUtc: new Date(departedAt).toISOString(),
         arrivedAtUtc: new Date(arrivedAt).toISOString(),
         coolerTempMinC: Number(coolerMin),
         coolerTempMaxC: Number(coolerMax),
-        tempStartC: Number(tempStart),
-        tempEndC: Number(tempEnd),
         deviationAcknowledged: deviationAck,
       });
       const toGroup = (g: GroupForm, storageCondition: string) => ({
         storageCondition,
         labTempC: Number(g.labTempC),
         visualCheck: g.visualCheck,
-        labWeightG: Number(g.labWeightG),
+        labWeightBeforeG: Number(g.labWeightBeforeG),
+        labWeightAfterG: Number(g.labWeightAfterG),
         sampleShrimpCount: Number(g.sampleShrimpCount),
-        sampleWeightG: Number(g.sampleWeightG),
       });
       await postJson(`/api/v1/batches/${encodeURIComponent(batch.batchId)}/groups`, {
         groups: [toGroup(groupSR, 'room_temp'), toGroup(groupSD, 'cold')],
@@ -548,7 +475,7 @@ export default function NewBatchPage() {
     );
   }
 
-  const steps = ['Pengadaan', 'Transportasi', 'Kelompok'];
+  const steps = ['Pengadaan', 'Pengelompokan'];
 
   const radioRow = (
     name: string,
@@ -570,6 +497,7 @@ export default function NewBatchPage() {
             type="radio"
             name={name}
             checked={value === v}
+            required
             onChange={() => onChange(v)}
             className="accent-emerald-400 w-4 h-4"
           />
@@ -589,6 +517,7 @@ export default function NewBatchPage() {
     <div className={fieldCls}>
       <label className={labelCls} htmlFor={key}>
         {label}
+        {reqMark}
       </label>
       <input
         id={key}
@@ -600,6 +529,7 @@ export default function NewBatchPage() {
         inputMode="decimal"
         autoComplete="off"
         value={value}
+        aria-required="true"
         aria-invalid={!!fieldErrors[key]}
         onChange={(e) => {
           onChange(e.target.value);
@@ -644,6 +574,7 @@ export default function NewBatchPage() {
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-labTempC`}>
               Suhu tusuk saat tiba (°C)
+              {reqMark}
             </label>
             <input
               id={`${prefix}-labTempC`}
@@ -653,6 +584,7 @@ export default function NewBatchPage() {
               inputMode="decimal"
               autoComplete="off"
               value={g.labTempC}
+              aria-required="true"
               aria-invalid={!!fieldErrors[`${prefix}-labTempC`]}
               onChange={(e) => set({ labTempC: e.target.value })}
               placeholder="6.5…"
@@ -661,17 +593,19 @@ export default function NewBatchPage() {
             {fieldErrors[`${prefix}-labTempC`] ? (
               fieldMessage(`${prefix}-labTempC`)
             ) : (
-              <p className={hintCls}>Tersalin dari suhu akhir transportasi; ubah bila beda.</p>
+              <p className={hintCls}>Ukur dengan termometer tusuk saat udang tiba.</p>
             )}
           </div>
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-visualCheck`}>
               Temuan visual
+              {reqMark}
             </label>
             <select
               id={`${prefix}-visualCheck`}
               name={`${prefix}-visualCheck`}
               value={g.visualCheck}
+              aria-required="true"
               aria-invalid={!!fieldErrors[`${prefix}-visualCheck`]}
               onChange={(e) => set({ visualCheck: e.target.value })}
               className={clsFor(`${prefix}-visualCheck`)}
@@ -699,31 +633,9 @@ export default function NewBatchPage() {
         </div>
         <div className="grid grid-cols-3 gap-3">
           <div className={fieldCls}>
-            <label className={labelCls} htmlFor={`${prefix}-labWeightG`}>
-              Berat di lab (g)
-            </label>
-            <input
-              id={`${prefix}-labWeightG`}
-              name={`${prefix}-labWeightG`}
-              type="number"
-              step="0.1"
-              inputMode="decimal"
-              autoComplete="off"
-              value={g.labWeightG}
-              aria-invalid={!!fieldErrors[`${prefix}-labWeightG`]}
-              onChange={(e) => set({ labWeightG: e.target.value })}
-              placeholder="482.0…"
-              className={clsFor(`${prefix}-labWeightG`)}
-            />
-            {fieldErrors[`${prefix}-labWeightG`] ? (
-              fieldMessage(`${prefix}-labWeightG`)
-            ) : (
-              <p className={hintCls}>Otomatis sama dengan kartu satunya; boleh diubah bila perlu.</p>
-            )}
-          </div>
-          <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-sampleShrimpCount`}>
               Ekor per sesi
+              {reqMark}
             </label>
             <input
               id={`${prefix}-sampleShrimpCount`}
@@ -734,6 +646,7 @@ export default function NewBatchPage() {
               inputMode="numeric"
               autoComplete="off"
               value={g.sampleShrimpCount}
+              aria-required="true"
               aria-invalid={!!fieldErrors[`${prefix}-sampleShrimpCount`]}
               onChange={(e) => set({ sampleShrimpCount: e.target.value })}
               className={clsFor(`${prefix}-sampleShrimpCount`)}
@@ -745,23 +658,54 @@ export default function NewBatchPage() {
             )}
           </div>
           <div className={fieldCls}>
-            <label className={labelCls} htmlFor={`${prefix}-sampleWeightG`}>
-              Berat sesi (g)
+            <label className={labelCls} htmlFor={`${prefix}-labWeightBeforeG`}>
+              Berat sebelum observasi (g)
+              {reqMark}
             </label>
             <input
-              id={`${prefix}-sampleWeightG`}
-              name={`${prefix}-sampleWeightG`}
+              id={`${prefix}-labWeightBeforeG`}
+              name={`${prefix}-labWeightBeforeG`}
               type="number"
               step="0.1"
               inputMode="decimal"
               autoComplete="off"
-              value={g.sampleWeightG}
-              aria-invalid={!!fieldErrors[`${prefix}-sampleWeightG`]}
-              onChange={(e) => set({ sampleWeightG: e.target.value })}
-              placeholder="162.3…"
-              className={clsFor(`${prefix}-sampleWeightG`)}
+              value={g.labWeightBeforeG}
+              aria-required="true"
+              aria-invalid={!!fieldErrors[`${prefix}-labWeightBeforeG`]}
+              onChange={(e) => set({ labWeightBeforeG: e.target.value })}
+              placeholder="482.0…"
+              className={clsFor(`${prefix}-labWeightBeforeG`)}
             />
-            {fieldMessage(`${prefix}-sampleWeightG`)}
+            {fieldErrors[`${prefix}-labWeightBeforeG`] ? (
+              fieldMessage(`${prefix}-labWeightBeforeG`)
+            ) : (
+              <p className={hintCls}>Ditimbang saat tiba, isi di tiap kartu.</p>
+            )}
+          </div>
+          <div className={fieldCls}>
+            <label className={labelCls} htmlFor={`${prefix}-labWeightAfterG`}>
+              Berat sesudah observasi (g)
+              {reqMark}
+            </label>
+            <input
+              id={`${prefix}-labWeightAfterG`}
+              name={`${prefix}-labWeightAfterG`}
+              type="number"
+              step="0.1"
+              inputMode="decimal"
+              autoComplete="off"
+              value={g.labWeightAfterG}
+              aria-required="true"
+              aria-invalid={!!fieldErrors[`${prefix}-labWeightAfterG`]}
+              onChange={(e) => set({ labWeightAfterG: e.target.value })}
+              placeholder="478.5…"
+              className={clsFor(`${prefix}-labWeightAfterG`)}
+            />
+            {fieldErrors[`${prefix}-labWeightAfterG`] ? (
+              fieldMessage(`${prefix}-labWeightAfterG`)
+            ) : (
+              <p className={hintCls}>Ditimbang setelah sesi terakhir kartu ini.</p>
+            )}
           </div>
         </div>
       </fieldset>
@@ -774,20 +718,23 @@ export default function NewBatchPage() {
         <h2 className="text-xl md:text-2xl font-mono font-black text-white tracking-wide text-balance">Batch baru</h2>
         <p className="text-xs font-mono text-white/60 mt-1">ID batch dan grup dibuat otomatis oleh server.</p>
         <p className="text-xs font-mono text-white/60 mt-1" aria-live="polite">
-          Langkah {step + 1} dari 3
+          Langkah {step + 1} dari 2
         </p>
         <div className="mt-2 flex gap-1.5" aria-hidden="true">
           {steps.map((_, i) => (
             <div key={i} className={`h-1 flex-1 rounded-full ${i <= step ? 'bg-emerald-400/80' : 'bg-white/10'}`} />
           ))}
         </div>
+        <p className="text-[11px] font-mono text-white/50 mt-2">
+          Tanda <span aria-hidden="true" className="text-rose-400">*</span> merah berarti wajib diisi.
+        </p>
         {AUTO_FILL_ENABLED && (
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
             <button type="button" onClick={fillTestData} className={btnGhost}>
               Isi otomatis (data tes)
             </button>
             <span className="text-[11px] font-mono text-white/40">
-              Uji cepat: mengisi pengadaan → transportasi → kelompok dengan nilai realistis; foto tetap dipilih manual.
+              Uji cepat: mengisi pengadaan dan pengelompokan dengan nilai realistis; foto tetap dipilih manual.
             </span>
           </div>
         )}
@@ -840,9 +787,11 @@ export default function NewBatchPage() {
             goToStep(1);
           }}
         >
+          <div className="grid grid-cols-2 gap-3">
           <div className={fieldCls}>
             <label className={labelCls} htmlFor="procuredAt">
               Tanggal dan jam beli (WIB)
+              {reqMark}
             </label>
             <input
               id="procuredAt"
@@ -850,6 +799,7 @@ export default function NewBatchPage() {
               type="datetime-local"
               autoComplete="off"
               value={procuredAt}
+              aria-required="true"
               aria-invalid={!!fieldErrors.procuredAt}
               onChange={(e) => {
                 setProcuredAt(e.target.value);
@@ -860,12 +810,58 @@ export default function NewBatchPage() {
             {fieldErrors.procuredAt ? (
               fieldMessage('procuredAt')
             ) : (
-              <p className={hintCls}>Wajib pagi 06:00–08:00 WIB, dan harus di antara waktu berangkat serta tiba. Tersimpan sebagai UTC.</p>
+              <p className={hintCls}>Wajib pagi 06:00–08:00 WIB, dan harus sebelum tanggal dan jam tiba. Tersimpan sebagai UTC.</p>
             )}
           </div>
           <div className={fieldCls}>
+            <label className={labelCls} htmlFor="arrivedAt">
+              Tanggal dan jam tiba di lab (WIB)
+              {reqMark}
+            </label>
+            <input
+              id="arrivedAt"
+              name="arrivedAt"
+              type="datetime-local"
+              autoComplete="off"
+              value={arrivedAt}
+              aria-required="true"
+              aria-invalid={!!fieldErrors.arrivedAt}
+              onChange={(e) => {
+                setArrivedAt(e.target.value);
+                revalidateLive(0, { arrivedAt: fieldErrors.arrivedAt });
+              }}
+              className={clsFor('arrivedAt')}
+            />
+            {fieldErrors.arrivedAt ? (
+              fieldMessage('arrivedAt')
+            ) : (
+              <p className={hintCls}>Tiba kembali di lab; tanggal dan jam beli harus sebelum ini.</p>
+            )}
+          </div>
+          </div>
+          {durationHours !== null && !fieldErrors.arrivedAt && (
+            <p aria-live="polite" className={`text-xs font-mono ${overDuration ? 'text-rose-300' : 'text-emerald-300'}`}>
+              Durasi: {durationFmt.format(durationHours)} jam {overDuration ? '(melebihi 3 jam)' : '(dalam batas 3 jam)'}
+            </p>
+          )}
+          {overDuration && (
+            <label className="flex items-start gap-2.5 p-3 rounded-xl border border-rose-400/30 bg-rose-500/10 text-xs font-mono text-rose-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={deviationAck}
+                onChange={(e) => {
+                  setDeviationAck(e.target.checked);
+                  revalidateLive(0, { arrivedAt: fieldErrors.arrivedAt });
+                }}
+                className="mt-0.5 w-4 h-4 accent-rose-400"
+              />
+              Catat sebagai deviasi cold-chain (durasi lebih dari 3 jam)
+            </label>
+          )}
+          <div className={fieldCls}>
             <label className={labelCls} htmlFor="marketSource">
               Sumber pasar
+              {reqMark}
             </label>
             <input
               id="marketSource"
@@ -874,6 +870,7 @@ export default function NewBatchPage() {
               autoComplete="off"
               spellCheck={false}
               value={marketSource}
+              aria-required="true"
               aria-invalid={!!fieldErrors.marketSource}
               onChange={(e) => {
                 setMarketSource(e.target.value);
@@ -888,17 +885,33 @@ export default function NewBatchPage() {
               <p className={hintCls}>Tulis bebas nama pasar tempat membeli.</p>
             )}
           </div>
-          <div className={fieldCls}>
-            <span className={labelCls}>Jenis sumber</span>
+          <div className="grid grid-cols-2 gap-3">
+            <div className={fieldCls}>
+            <span className={labelCls}>
+              Jenis sumber
+              {reqMark}
+            </span>
             {radioRow('sourceType', sourceType, setSourceType, [
               ['market', 'Pasar'],
               ['farm', 'Tambak'],
             ])}
           </div>
+          <div className={fieldCls}>
+            <span className={labelCls}>
+              Kondisi awal
+              {reqMark}
+            </span>
+            {radioRow('initialCondition', initialCondition, setInitialCondition, [
+              ['dead', 'Mati'],
+              ['alive', 'Hidup'],
+            ])}
+          </div>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className={fieldCls}>
               <label className={labelCls} htmlFor="shrimpCount">
                 Jumlah ekor
+                {reqMark}
               </label>
               <input
                 id="shrimpCount"
@@ -908,6 +921,7 @@ export default function NewBatchPage() {
                 inputMode="numeric"
                 autoComplete="off"
                 value={shrimpCount}
+                aria-required="true"
                 aria-invalid={!!fieldErrors.shrimpCount}
                 onChange={(e) => {
                   setShrimpCount(e.target.value);
@@ -917,28 +931,13 @@ export default function NewBatchPage() {
               />
               {fieldErrors.shrimpCount ? fieldMessage('shrimpCount') : <p className={hintCls}>Minimal 10 ekor.</p>}
             </div>
-            <div className={fieldCls}>
-              <label className={labelCls} htmlFor="sizeGrade">
-                Ukuran (ekor/kg)
-              </label>
-              <input
-                id="sizeGrade"
-                name="sizeGrade"
-                type="number"
-                min={1}
-                step={1}
-                inputMode="numeric"
-                autoComplete="off"
-                value={sizeGrade}
-                aria-invalid={!!fieldErrors.sizeGrade}
-                onChange={(e) => {
-                  setSizeGrade(e.target.value);
-                  revalidateLive(0, { sizeGrade: fieldErrors.sizeGrade });
-                }}
-                className={clsFor('sizeGrade')}
-              />
-              {fieldErrors.sizeGrade ? fieldMessage('sizeGrade') : <p className={hintCls}>Jumlah ekor per kg, bilangan bulat.</p>}
-            </div>
+            {numberField('shrimpLengthCm', 'Panjang udang (cm)', shrimpLengthCm, setShrimpLengthCm, {
+              min: 1,
+              max: 50,
+              step: '0.1',
+              placeholder: '12.5…',
+              hint: 'Dari bekas potongan kepala sampai ujung ekor (telson).',
+            })}
           </div>
           <div className="grid grid-cols-2 gap-3">
             {numberField('totalWeightG', 'Berat total (gram)', totalWeightG, (v) => {
@@ -950,14 +949,17 @@ export default function NewBatchPage() {
               revalidateLive(0, { initialTempC: fieldErrors.initialTempC });
             }, { placeholder: '8.2…', hint: 'Ukur dengan termometer tusuk.' })}
           </div>
-          <div className={fieldCls}>
-            <span className={labelCls}>Kondisi awal</span>
-            {radioRow('initialCondition', initialCondition, setInitialCondition, [
-              ['fresh_dead', 'Segar (mati dingin)'],
-              ['dead', 'Mati'],
-              ['alive', 'Hidup'],
-            ])}
+          <div className="grid grid-cols-2 gap-3">
+            {numberField('coolerMin', 'Suhu cool box min (°C)', coolerMin, (v) => {
+              setCoolerMin(v);
+              revalidateLive(0, { coolerMin: fieldErrors.coolerMin });
+            }, { placeholder: '1.2…' })}
+            {numberField('coolerMax', 'Suhu cool box max (°C)', coolerMax, (v) => {
+              setCoolerMax(v);
+              revalidateLive(0, { coolerMax: fieldErrors.coolerMax });
+            }, { placeholder: '3.8…' })}
           </div>
+          <p className={hintCls}>Jaga 0–4 °C dengan rasio es:udang 2:1.</p>
           <div className={fieldCls}>
             <label className={labelCls} htmlFor="photos">
               Foto kondisi awal
@@ -971,7 +973,7 @@ export default function NewBatchPage() {
               onChange={(e) => handlePhotoSelect(e.target.files, e.target)}
               className="text-xs font-mono text-white/60 file:mr-2 file:px-3 file:py-1.5 file:rounded-lg file:bg-white/10 file:border file:border-white/10 file:text-white/80 file:text-xs file:font-mono"
             />
-            <p className={hintCls}>JPG/PNG sampai 5 MB, maksimal 10 (bisa tambah bertahap). Minimal 1 foto sebelum batch dikunci.</p>
+            <p className={hintCls}>JPG/PNG sampai 5 MB, maksimal 10 (bisa tambah bertahap). Tiap foto wajib ber-caption (mis. di pasar, sebelum chamber). Minimal 1 foto sebelum batch dikunci.</p>
             {fieldErrors.photos && (
               <p className="text-[11px] font-mono text-amber-300" role="status">
                 {fieldErrors.photos}
@@ -980,9 +982,24 @@ export default function NewBatchPage() {
             {photoPreviews.length > 0 && (
               <div className="grid grid-cols-4 gap-2">
                 {photoPreviews.map((src, i) => (
-                  <div key={src} className="relative">
+                  <div key={src} className="relative space-y-1">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={src} alt={`Pratinjau foto ${i + 1}`} className="w-full h-16 object-cover rounded-lg border border-white/10" />
+                    <label className={`${labelCls} flex items-center gap-1`} htmlFor={`photo-caption-${i}`}>
+                      Caption <span aria-hidden="true" className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      id={`photo-caption-${i}`}
+                      name={`photo-caption-${i}`}
+                      type="text"
+                      maxLength={MAX_PHOTO_CAPTION_LENGTH}
+                      autoComplete="off"
+                      value={photoCaptions[i] ?? ''}
+                      aria-required="true"
+                      onChange={(e) => setPhotoCaptions((prev) => prev.map((c, j) => (j === i ? e.target.value : c)))}
+                      placeholder="Di pasar…"
+                      className={inputCls}
+                    />
                     <button
                       type="button"
                       onClick={() => removePhoto(i)}
@@ -997,125 +1014,17 @@ export default function NewBatchPage() {
             )}
           </div>
           <button type="submit" className={btnPrimary}>
-            Lanjut ke Transportasi
+            Lanjut ke Pengelompokan
           </button>
         </form>
       )}
 
       {step === 1 && (
-        <form
-          className={cardCls}
-          noValidate
-          onSubmit={(e) => {
-            e.preventDefault();
-            goToStep(2);
-          }}
-        >
-          <div className="grid grid-cols-2 gap-3">
-            <div className={fieldCls}>
-              <label className={labelCls} htmlFor="departedAt">
-                Waktu berangkat (WIB)
-              </label>
-              <input
-                id="departedAt"
-                name="departedAt"
-                type="datetime-local"
-                autoComplete="off"
-                value={departedAt}
-                aria-invalid={!!fieldErrors.departedAt}
-                onChange={(e) => {
-                  setDepartedAt(e.target.value);
-                  revalidateLive(1, { departedAt: fieldErrors.departedAt });
-                }}
-                className={clsFor('departedAt')}
-              />
-              {fieldErrors.departedAt ? (
-                fieldMessage('departedAt')
-              ) : (
-                <p className={hintCls}>Berangkat dari lab menuju pasar; jam beli harus sesudah ini.</p>
-              )}
-            </div>
-            <div className={fieldCls}>
-              <label className={labelCls} htmlFor="arrivedAt">
-                Waktu tiba di lab (WIB)
-              </label>
-              <input
-                id="arrivedAt"
-                name="arrivedAt"
-                type="datetime-local"
-                autoComplete="off"
-                value={arrivedAt}
-                aria-invalid={!!fieldErrors.arrivedAt}
-                onChange={(e) => {
-                  setArrivedAt(e.target.value);
-                  revalidateLive(1, { arrivedAt: fieldErrors.arrivedAt });
-                }}
-                className={clsFor('arrivedAt')}
-              />
-              {fieldErrors.arrivedAt ? (
-                fieldMessage('arrivedAt')
-              ) : (
-                <p className={hintCls}>Tiba kembali di lab; jam beli harus sebelum ini.</p>
-              )}
-            </div>
-          </div>
-          {durationHours !== null && !fieldErrors.arrivedAt && (
-            <p aria-live="polite" className={`text-xs font-mono ${overDuration ? 'text-rose-300' : 'text-emerald-300'}`}>
-              Durasi: {durationFmt.format(durationHours)} jam {overDuration ? '(melebihi 3 jam)' : '(dalam batas 3 jam)'}
-            </p>
-          )}
-          <div className="grid grid-cols-2 gap-3">
-            {numberField('coolerMin', 'Suhu cool box min (°C)', coolerMin, (v) => {
-              setCoolerMin(v);
-              revalidateLive(1, { coolerMin: fieldErrors.coolerMin });
-            }, { placeholder: '1.2…' })}
-            {numberField('coolerMax', 'Suhu cool box max (°C)', coolerMax, (v) => {
-              setCoolerMax(v);
-              revalidateLive(1, { coolerMax: fieldErrors.coolerMax });
-            }, { placeholder: '3.8…' })}
-          </div>
-          <p className={hintCls}>Jaga 0–4 °C dengan rasio es:udang 2:1.</p>
-          <div className="grid grid-cols-2 gap-3">
-            {numberField('tempStart', 'Suhu awal transportasi (°C)', tempStart, (v) => {
-              changeTempStart(v);
-              revalidateLive(1, { tempStart: fieldErrors.tempStart });
-            }, { placeholder: '3.0…', hint: 'Tersalin dari Suhu awal udang; ubah hanya bila beda.' })}
-            {numberField('tempEnd', 'Suhu akhir transportasi (°C)', tempEnd, (v) => {
-              changeTempEnd(v);
-              revalidateLive(1, { tempEnd: fieldErrors.tempEnd });
-            }, { placeholder: '3.5…', hint: 'Tersalin ke suhu tusuk saat tiba di tiap kelompok.' })}
-          </div>
-          {overDuration && (
-            <label className="flex items-start gap-2.5 p-3 rounded-xl border border-rose-400/30 bg-rose-500/10 text-xs font-mono text-rose-200 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={deviationAck}
-                onChange={(e) => {
-                  setDeviationAck(e.target.checked);
-                  revalidateLive(1, { arrivedAt: fieldErrors.arrivedAt });
-                }}
-                className="mt-0.5 w-4 h-4 accent-rose-400"
-              />
-              Catat sebagai deviasi cold-chain (durasi lebih dari 3 jam)
-            </label>
-          )}
-          <div className="flex gap-2">
-            <button type="button" onClick={() => goToStep(0)} className={btnBack}>
-              Kembali
-            </button>
-            <button type="submit" className={`${btnPrimary} flex-[2]`}>
-              Lanjut ke Kelompok
-            </button>
-          </div>
-        </form>
-      )}
-
-      {step === 2 && (
         <div className="flex flex-col gap-4">
           {groupCard(
             'sr',
             'group-title-sr',
-            'Kelompok suhu ruang (25 ± 2 °C)',
+            'Suhu Ruang (25 ± 2 °C)',
             'Diukur tiap 6 jam selama 36–48 jam.',
             groupSR,
             setSR
@@ -1123,13 +1032,13 @@ export default function NewBatchPage() {
           {groupCard(
             'sd',
             'group-title-sd',
-            'Kelompok dingin (4 ± 1 °C)',
+            'Suhu Dingin (4 ± 1 °C)',
             'Diukur tiap 24 jam selama 10–14 hari.',
             groupSD,
             setSD
           )}
           <div className="flex gap-2">
-            <button type="button" onClick={() => goToStep(1)} disabled={submitting} className={btnBack}>
+            <button type="button" onClick={() => goToStep(0)} disabled={submitting} className={btnBack}>
               Kembali
             </button>
             <button

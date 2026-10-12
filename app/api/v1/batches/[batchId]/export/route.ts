@@ -52,6 +52,7 @@ export async function GET(
       const num = (v: { toNumber(): number } | null | undefined): number | '' =>
         v === null || v === undefined ? '' : v.toNumber();
       const dt = (v: Date | null | undefined): string => (v ? v.toISOString() : '');
+      const photoCount = await prisma.batchPhoto.count({ where: { batchId } });
       const batchBlock = [
         full.batchId,
         dt(full.procuredAtUtc),
@@ -59,18 +60,16 @@ export async function GET(
         DB_TO_SOURCE[full.sourceType] ?? full.sourceType,
         full.shrimpCount,
         full.sizeGrade,
+        num(full.shrimpLengthCm),
         num(full.totalWeightG),
         String(full.initialCondition).toLowerCase(),
         num(full.initialTempC),
-        dt(full.departedAtUtc),
         dt(full.arrivedAtUtc),
         num(full.coolerTempMinC),
         num(full.coolerTempMaxC),
         full.iceToShrimpRatio,
-        num(full.tempStartC),
-        num(full.tempEndC),
         full.rejectionNotes ?? '',
-        full.photoUrls.length,
+        photoCount,
         dt(full.lockedAt),
       ];
       const rows: unknown[][] = [];
@@ -85,9 +84,9 @@ export async function GET(
           num(g.targetTempC),
           num(g.labTempC),
           String(g.visualCheck).toLowerCase(),
-          num(g.labWeightG),
+          num(g.labWeightBeforeG),
+          num(g.labWeightAfterG),
           g.sampleShrimpCount,
-          num(g.sampleWeightG),
         ];
         if (g.sessions.length === 0) {
           // Baris grup tanpa sesi: kolom sesi kosong, ditandai jelas agar tidak ambigu.

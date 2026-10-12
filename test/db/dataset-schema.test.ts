@@ -27,17 +27,15 @@ function batchData(overrides: Record<string, unknown> = {}) {
     marketSource: 'Pasar Bebas Ketik Manual',
     sourceType: 'MARKET' as const,
     shrimpCount: 12,
-    sizeGrade: 60,
+    // Langsung via Prisma (melewati API): isi turunan manual sesuai rumus server.
+    sizeGrade: 25, // Math.round(12 / 485.5 * 1000)
+    shrimpLengthCm: 12.5,
     totalWeightG: 485.5,
-    initialCondition: 'FRESH_DEAD' as const,
+    initialCondition: 'DEAD' as const,
     initialTempC: 8.2,
-    departedAtUtc: new Date('2099-01-01T00:15:00.000Z'),
     arrivedAtUtc: new Date('2099-01-01T02:00:00.000Z'),
     coolerTempMinC: 1.2,
     coolerTempMaxC: 3.8,
-    tempStartC: 3.0,
-    tempEndC: 3.5,
-    photoUrls: [`${BATCH}_awal_01.jpg`],
     operatorId,
     ...overrides,
   };
@@ -74,9 +72,9 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
         targetTempC: 25.0,
         labTempC: 6.5,
         visualCheck: 'NORMAL',
-        labWeightG: 482.0,
+        labWeightBeforeG: 482.0,
+        labWeightAfterG: 478.5,
         sampleShrimpCount: 4,
-        sampleWeightG: 162.3,
       },
     });
     await prisma.measurementSession.create({
@@ -143,9 +141,9 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
           targetTempC: 25.0,
           labTempC: 6.0,
           visualCheck: 'NORMAL',
-          labWeightG: 480.0,
+          labWeightBeforeG: 480.0,
+          labWeightAfterG: 476.2,
           sampleShrimpCount: 4,
-          sampleWeightG: 160.0,
         },
       }),
       (err: unknown) => {
@@ -180,24 +178,20 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
     );
   });
 
-  it('CHECK: urutan waktu transport terbalik ditolak', async () => {
+  it('CHECK: tiba sebelum/saat beli ditolak', async () => {
     await assert.rejects(
       prisma.collectionBatch.create({
         data: batchData({
           batchId: 'BT-20990101-04',
-          departedAtUtc: new Date('2099-01-01T05:00:00.000Z'),
-          arrivedAtUtc: new Date('2099-01-01T02:00:00.000Z'),
+          arrivedAtUtc: new Date('2099-01-01T00:00:00.000Z'), // tiba 07:00, beli 07:30
         }),
       })
     );
-  });
-
-  it('CHECK: jam beli di luar rentang berangkat–tiba ditolak', async () => {
     await assert.rejects(
       prisma.collectionBatch.create({
         data: batchData({
           batchId: 'BT-20990101-06',
-          procuredAtUtc: new Date('2099-01-01T00:00:00.000Z'), // 07:00 WIB, sebelum berangkat 07:15
+          arrivedAtUtc: new Date('2099-01-01T00:30:00.000Z'), // tiba tepat saat beli
         }),
       })
     );
@@ -225,9 +219,9 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
           targetTempC: 4.0,
           labTempC: 5.0,
           visualCheck: 'NORMAL',
-          labWeightG: 480.0,
+          labWeightBeforeG: 480.0,
+          labWeightAfterG: 476.2,
           sampleShrimpCount: 9,
-          sampleWeightG: 300.0,
         },
       })
     );
@@ -325,9 +319,9 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
         targetTempC: 4.0,
         labTempC: 5.0,
         visualCheck: 'NORMAL',
-        labWeightG: 480.0,
+        labWeightBeforeG: 480.0,
+        labWeightAfterG: 476.2,
         sampleShrimpCount: 4,
-        sampleWeightG: 160.0,
       },
     });
     const groups = await prisma.sampleGroup.findMany({ where: { batchId: BATCH } });

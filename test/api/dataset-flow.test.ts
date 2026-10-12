@@ -128,16 +128,13 @@ describe('Dataset Feature End-to-End Flow (Fase 8)', () => {
         marketSource: 'Pasar Flow',
         sourceType: 'market',
         shrimpCount: 12,
-        sizeGrade: 60,
+        shrimpLengthCm: 12.5,
         totalWeightG: 485.5,
-        initialCondition: 'fresh_dead',
+        initialCondition: 'dead',
         initialTempC: 8.2,
-        departedAtUtc: `${DAY}T00:15:00.000Z`,
         arrivedAtUtc: `${DAY}T05:00:00.000Z`, // ~4h45m
         coolerTempMinC: 1.2,
         coolerTempMaxC: 3.8,
-        tempStartC: 3.0,
-        tempEndC: 3.5,
       })
     );
     assert.strictEqual(res.status, 422);
@@ -150,16 +147,13 @@ describe('Dataset Feature End-to-End Flow (Fase 8)', () => {
         marketSource: 'Pasar Flow',
         sourceType: 'market',
         shrimpCount: 12,
-        sizeGrade: 60,
+        shrimpLengthCm: 12.5,
         totalWeightG: 485.5,
-        initialCondition: 'fresh_dead',
+        initialCondition: 'dead',
         initialTempC: 8.2,
-        departedAtUtc: `${DAY}T00:15:00.000Z`,
         arrivedAtUtc: `${DAY}T02:00:00.000Z`,
         coolerTempMinC: 1.2,
         coolerTempMaxC: 3.8,
-        tempStartC: 3.0,
-        tempEndC: 3.5,
       })
     );
     assert.strictEqual(batchRes.status, 201);
@@ -169,8 +163,8 @@ describe('Dataset Feature End-to-End Flow (Fase 8)', () => {
     const groupRes = await createGroups(
       post(adminCookie, `http://localhost:3000/api/v1/batches/${batchId}/groups`, {
         groups: [
-          { storageCondition: 'room_temp', labTempC: 6.5, visualCheck: 'normal', labWeightG: 482, sampleShrimpCount: 4, sampleWeightG: 162.3 },
-          { storageCondition: 'cold', labTempC: 5.0, visualCheck: 'normal', labWeightG: 480, sampleShrimpCount: 4, sampleWeightG: 160 },
+          { storageCondition: 'room_temp', labTempC: 6.5, visualCheck: 'normal', labWeightBeforeG: 482, labWeightAfterG: 478.5, sampleShrimpCount: 4 },
+          { storageCondition: 'cold', labTempC: 5.0, visualCheck: 'normal', labWeightBeforeG: 480, labWeightAfterG: 476.2, sampleShrimpCount: 4 },
         ],
       }),
       { params: Promise.resolve({ batchId }) }
@@ -243,9 +237,8 @@ describe('Dataset Feature End-to-End Flow (Fase 8)', () => {
     );
 
     // Lock butuh foto
-    await prisma.collectionBatch.update({
-      where: { batchId },
-      data: { photoUrls: [`uploads/${batchId}/flow.jpg`] },
+    await prisma.batchPhoto.create({
+      data: { batchId, url: `uploads/${batchId}/flow.jpg`, caption: 'Foto alur', sortOrder: 0 },
     });
     const locked = await lockBatch(
       post(adminCookie, `http://localhost:3000/api/v1/batches/${batchId}/lock`, {}),

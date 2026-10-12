@@ -70,17 +70,15 @@ describe('HTTP API v1: Dataset Session Reopen (INCOMPLETE → OPEN)', () => {
         marketSource: 'Pasar Reopen',
         sourceType: 'MARKET',
         shrimpCount: 12,
-        sizeGrade: 60,
+        // Langsung via Prisma (melewati API): isi turunan manual sesuai rumus server.
+        sizeGrade: 30, // Math.round(12 / 400 * 1000)
+        shrimpLengthCm: 12.5,
         totalWeightG: 400,
-        initialCondition: 'FRESH_DEAD',
+        initialCondition: 'DEAD',
         initialTempC: 8,
-        departedAtUtc: new Date(`${DAY}T00:15:00.000Z`),
         arrivedAtUtc: new Date(`${DAY}T02:00:00.000Z`),
         coolerTempMinC: 1,
         coolerTempMaxC: 3,
-        tempStartC: 3,
-        tempEndC: 3.5,
-        photoUrls: [],
         operatorId: admin.id,
       },
     });
@@ -93,9 +91,9 @@ describe('HTTP API v1: Dataset Session Reopen (INCOMPLETE → OPEN)', () => {
         targetTempC: 25,
         labTempC: 6,
         visualCheck: 'NORMAL',
-        labWeightG: 400,
+        labWeightBeforeG: 400,
+        labWeightAfterG: 395.5,
         sampleShrimpCount: 4,
-        sampleWeightG: 150,
       },
     });
     groupId = group.groupId;

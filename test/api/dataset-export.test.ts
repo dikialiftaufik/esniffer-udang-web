@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { prisma, closeDb, allocateHistorySequence } from '../../lib/db/client.ts';
 import { GET as exportBatch } from '../../app/api/v1/batches/[batchId]/export/route.ts';
-import { DATASET_CSV_HEADERS } from '../../lib/api/csv.ts';
+import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS } from '../../lib/api/csv.ts';
 import { hashPassword } from '../../lib/auth/password.ts';
 import { createSession as createAuthSession, buildSessionCookie } from '../../lib/auth/session.ts';
 
@@ -93,17 +93,15 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
         marketSource: 'Pasar Export',
         sourceType: 'MARKET',
         shrimpCount: 12,
-        sizeGrade: 60,
+        // Langsung via Prisma (melewati API): isi turunan manual sesuai rumus server.
+        sizeGrade: 25, // Math.round(12 / 485.5 * 1000)
+        shrimpLengthCm: 12.5,
         totalWeightG: 485.5,
-        initialCondition: 'FRESH_DEAD',
+        initialCondition: 'DEAD',
         initialTempC: 8.2,
-        departedAtUtc: new Date('2099-06-06T00:15:00.000Z'),
         arrivedAtUtc: new Date('2099-06-06T02:00:00.000Z'),
         coolerTempMinC: 1.2,
         coolerTempMaxC: 3.8,
-        tempStartC: 3.0,
-        tempEndC: 3.5,
-        photoUrls: [],
         operatorId: admin.id,
       },
     });
@@ -116,9 +114,9 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
         targetTempC: 25.0,
         labTempC: 6.5,
         visualCheck: 'NORMAL',
-        labWeightG: 482.0,
+        labWeightBeforeG: 482.0,
+        labWeightAfterG: 478.5,
         sampleShrimpCount: 4,
-        sampleWeightG: 162.3,
       },
     });
     // Grup dingin tanpa sesi — menguji baris 'no_session' pada metadata.
@@ -130,9 +128,9 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
         targetTempC: 4.0,
         labTempC: 5.0,
         visualCheck: 'NORMAL',
-        labWeightG: 480.0,
+        labWeightBeforeG: 480.0,
+        labWeightAfterG: 476.2,
         sampleShrimpCount: 4,
-        sampleWeightG: 160.0,
       },
     });
     const session = await prisma.measurementSession.create({
@@ -164,6 +162,7 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
     await prisma.sampleGroup.deleteMany({ where: { batchId: BATCH } });
     await prisma.collectionBatch.deleteMany({ where: { batchId: BATCH } });
     await prisma.deviceAssignment.deleteMany({ where: { id: assignmentId } });
+    await prisma.collectionBatch.deleteMany({ where: { batchId: 'BT-20990606-02' } });
     await prisma.device.deleteMany({ where: { id: deviceId } });
     await prisma.chamber.deleteMany({ where: { id: chamberId } });
     await prisma.authSession.deleteMany({ where: { userId: { in: userIds } } });
@@ -249,21 +248,62 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
     const sr = lines.find((l) => l.includes(GROUP))!.split(',');
     assert.strictEqual(sr[0], BATCH);
     assert.strictEqual(sr[2], 'Pasar Export');
-    assert.strictEqual(sr[6], '485.5');
-    assert.strictEqual(sr[19], GROUP);
-    assert.strictEqual(sr[20], 'room_temp');
-    assert.strictEqual(sr[24], '482');
-    assert.strictEqual(sr[26], '162.3');
-    assert.strictEqual(sr[27], SESSION);
-    assert.strictEqual(sr[29], '0');
-    assert.strictEqual(sr[32], 'complete');
-    assert.strictEqual(sr[33], 'true');
+    assert.strictEqual(sr[6], '12.5'); // shrimp_length_cm batch
+    assert.strictEqual(sr[7], '485.5');
+    assert.strictEqual(sr[17], GROUP);
+    assert.strictEqual(sr[18], 'room_temp');
+    assert.strictEqual(sr[22], '482'); // lab_weight_before_g
+    assert.strictEqual(sr[23], '478.5'); // lab_weight_after_g
+    assert.strictEqual(sr[24], '4'); // sample_shrimp_count
+    assert.strictEqual(sr[25], SESSION);
+    assert.strictEqual(sr[27], '0');
+    assert.strictEqual(sr[30], 'complete');
+    assert.strictEqual(sr[31], 'true');
 
     const sd = lines.find((l) => l.includes(`${BATCH}-SD`))!.split(',');
-    assert.strictEqual(sd[19], `${BATCH}-SD`);
-    assert.strictEqual(sd[20], 'cold');
-    assert.strictEqual(sd[27], ''); // session_id kosong
-    assert.strictEqual(sd[32], 'no_session'); // ditandai jelas
+    assert.strictEqual(sd[17], `${BATCH}-SD`);
+    assert.strictEqual(sd[18], 'cold');
+    assert.strictEqual(sd[23], '476.2'); // lab_weight_after_g grup dingin
+    assert.strictEqual(sd[25], ''); // session_id kosong
+    assert.strictEqual(sd[30], 'no_session'); // ditandai jelas
+  });
+
+  it('4b. metadata batch tanpa grup: semua baris selebar header', async () => {
+    const admin = await prisma.user.findUniqueOrThrow({
+      where: { email: `export-admin-${runId}@esniffer.local` },
+    });
+    await prisma.collectionBatch.create({
+      data: {
+        batchId: 'BT-20990606-02',
+        procuredAtUtc: new Date('2099-06-06T00:30:00.000Z'),
+        marketSource: 'Pasar Export',
+        sourceType: 'MARKET',
+        shrimpCount: 12,
+        sizeGrade: 25,
+        shrimpLengthCm: 12.5,
+        totalWeightG: 485.5,
+        initialCondition: 'DEAD',
+        initialTempC: 8.2,
+        arrivedAtUtc: new Date('2099-06-06T02:00:00.000Z'),
+        coolerTempMinC: 1.2,
+        coolerTempMaxC: 3.8,
+        operatorId: admin.id,
+      },
+    });
+    const res = await exportBatch(
+      new Request('http://localhost:3000/api/v1/batches/BT-20990606-02/export?format=metadata', {
+        headers: { Cookie: viewerCookie },
+      }),
+      { params: Promise.resolve({ batchId: 'BT-20990606-02' }) }
+    );
+    assert.strictEqual(res.status, 200);
+    const lines = (await res.text()).split('\r\n').filter((l) => l.length > 0);
+    assert.strictEqual(lines.length, 2); // header + 1 baris tanpa grup
+    const width = DATASET_METADATA_CSV_HEADERS.length;
+    for (const line of lines) {
+      assert.strictEqual(line.split(',').length, width);
+    }
+    assert.ok(lines[1].includes('no_session'));
   });
 
   it('5. format tidak dikenal ditolak 422', async () => {

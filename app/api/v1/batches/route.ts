@@ -9,7 +9,6 @@ import {
   parseSourceType,
   parseInitialCondition,
   parsePositiveNumber,
-  parseFiniteNumber,
   parseBoundedNumber,
   parseIntMinimum,
   assertTransportGates,
@@ -59,11 +58,13 @@ export async function POST(request: Request): Promise<Response> {
     const marketSource = parseRequiredString(body?.marketSource, 'marketSource', 1, 100);
     const sourceType = parseSourceType(body?.sourceType);
     const shrimpCount = parseIntMinimum(body?.shrimpCount, 'shrimpCount', 10);
-    const sizeGrade = parseIntMinimum(body?.sizeGrade, 'sizeGrade', 1);
+    // Ukuran ekor/kg terhitung otomatis (tidak dibaca dari input):
+    // jumlah ekor ÷ berat total (gram) × 1000, dibulatkan ke bilangan bulat.
     const totalWeightG = parsePositiveNumber(body?.totalWeightG, 'totalWeightG', 2000);
+    const sizeGrade = Math.round((shrimpCount / totalWeightG) * 1000);
+    const shrimpLengthCm = parseBoundedNumber(body?.shrimpLengthCm, 'shrimpLengthCm', 1, 50);
     const initialCondition = parseInitialCondition(body?.initialCondition);
     const initialTempC = parseBoundedNumber(body?.initialTempC, 'initialTempC', -2, 30);
-    const departedAtUtc = parseIsoDate(body?.departedAtUtc, 'departedAtUtc', true)!;
     const arrivedAtUtc = parseIsoDate(body?.arrivedAtUtc, 'arrivedAtUtc', true)!;
     const coolerTempMinC = parseBoundedNumber(body?.coolerTempMinC, 'coolerTempMinC', 0, 4);
     const coolerTempMaxC = parseBoundedNumber(body?.coolerTempMaxC, 'coolerTempMaxC', 0, 4);
@@ -73,17 +74,11 @@ export async function POST(request: Request): Promise<Response> {
     if (!/^\d+:\d+$/.test(iceToShrimpRatio)) {
       throw validationError('Field "iceToShrimpRatio" harus berpola N:N, contoh 2:1');
     }
-    const tempStartC = parseFiniteNumber(body?.tempStartC, 'tempStartC');
-    const tempEndC = parseFiniteNumber(body?.tempEndC, 'tempEndC');
     const rejectionNotes = parseOptionalString(body?.rejectionNotes, 'rejectionNotes', 500);
-    const photoUrls = body?.photoUrls === undefined
-      ? []
-      : Array.isArray(body.photoUrls) && body.photoUrls.every((u: unknown) => typeof u === 'string' && u.length > 0 && u.length <= 500)
-        ? (body.photoUrls as string[])
-        : (() => { throw validationError('Field "photoUrls" harus array string path (diisi via upload Fase 4)'); })();
+    // Foto selalu mulai kosong dan diisi lewat upload (tabel batch_photos).
 
     assertProcurementWindow(procuredAtUtc);
-    assertTransportGates(procuredAtUtc, departedAtUtc, arrivedAtUtc, body?.deviationAcknowledged);
+    assertTransportGates(procuredAtUtc, arrivedAtUtc, body?.deviationAcknowledged);
 
     // Auto batch_id server-side; retry naik bila balapan request bersamaan.
     let batch = null;
@@ -105,18 +100,15 @@ export async function POST(request: Request): Promise<Response> {
             sourceType,
             shrimpCount,
             sizeGrade,
+            shrimpLengthCm,
             totalWeightG,
             initialCondition,
             initialTempC,
-            departedAtUtc,
             arrivedAtUtc,
             coolerTempMinC,
             coolerTempMaxC,
             iceToShrimpRatio,
-            tempStartC,
-            tempEndC,
             rejectionNotes,
-            photoUrls,
             operatorId: auth.user.id,
           },
         });

@@ -74,17 +74,15 @@ describe('Dataset Backfill Session Readings (Fase 6)', () => {
         marketSource: 'Pasar Backfill',
         sourceType: 'MARKET',
         shrimpCount: 12,
-        sizeGrade: 60,
+        // Langsung via Prisma (melewati API): isi turunan manual sesuai rumus server.
+        sizeGrade: 25, // Math.round(12 / 485.5 * 1000)
+        shrimpLengthCm: 12.5,
         totalWeightG: 485.5,
-        initialCondition: 'FRESH_DEAD',
+        initialCondition: 'DEAD',
         initialTempC: 8.2,
-        departedAtUtc: new Date('2099-05-05T00:15:00.000Z'),
         arrivedAtUtc: new Date('2099-05-05T02:00:00.000Z'),
         coolerTempMinC: 1.2,
         coolerTempMaxC: 3.8,
-        tempStartC: 3.0,
-        tempEndC: 3.5,
-        photoUrls: [],
         operatorId: user.id,
       },
     });
@@ -97,9 +95,9 @@ describe('Dataset Backfill Session Readings (Fase 6)', () => {
         targetTempC: 25.0,
         labTempC: 6.5,
         visualCheck: 'NORMAL',
-        labWeightG: 482.0,
+        labWeightBeforeG: 482.0,
+        labWeightAfterG: 478.5,
         sampleShrimpCount: 4,
-        sampleWeightG: 162.3,
       },
     });
     const endedAt = new Date(START.getTime() + 15 * 60_000);

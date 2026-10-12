@@ -13,7 +13,7 @@ import { hashPassword } from '../../lib/auth/password.ts';
 import { createSession as createAuthSession, buildSessionCookie } from '../../lib/auth/session.ts';
 
 const DAY = '2099-02-02';
-const PROCURED = `${DAY}T00:30:00.000Z`; // 07:30 WIB — dalam jendela 06:00–08:00, sesudah berangkat 07:15
+const PROCURED = `${DAY}T00:30:00.000Z`; // 07:30 WIB — dalam jendela 06:00–08:00
 
 function postHeaders(cookie: string): Record<string, string> {
   return {
@@ -30,16 +30,13 @@ function batchBody(overrides: Record<string, unknown> = {}) {
     marketSource: 'Pasar Bebas Ketik Manual',
     sourceType: 'market',
     shrimpCount: 12,
-    sizeGrade: 60,
+    shrimpLengthCm: 12.5,
     totalWeightG: 485.5,
-    initialCondition: 'fresh_dead',
+    initialCondition: 'dead',
     initialTempC: 8.2,
-    departedAtUtc: `${DAY}T00:15:00.000Z`,
     arrivedAtUtc: `${DAY}T02:00:00.000Z`,
     coolerTempMinC: 1.2,
     coolerTempMaxC: 3.8,
-    tempStartC: 3.0,
-    tempEndC: 3.5,
     ...overrides,
   };
 }
@@ -51,17 +48,17 @@ function groupsBody() {
         storageCondition: 'room_temp',
         labTempC: 6.5,
         visualCheck: 'normal',
-        labWeightG: 482.0,
+        labWeightBeforeG: 482.0,
+        labWeightAfterG: 478.5,
         sampleShrimpCount: 4,
-        sampleWeightG: 162.3,
       },
       {
         storageCondition: 'cold',
         labTempC: 5.0,
         visualCheck: 'normal',
-        labWeightG: 480.0,
+        labWeightBeforeG: 480.0,
+        labWeightAfterG: 476.2,
         sampleShrimpCount: 4,
-        sampleWeightG: 160.0,
       },
     ],
   };
@@ -116,7 +113,7 @@ describe('HTTP API v1: Dataset Batches, Groups, Sessions & Lock (Fase 3)', () =>
     const body = await res.json();
     assert.match(body.data.batchId, /^BT-20990202-\d{2}$/);
     assert.strictEqual(body.data.sourceType, 'market');
-    assert.deepStrictEqual(body.data.photoUrls, []);
+    assert.strictEqual(body.data.sizeGrade, 25); // Math.round(12 / 485.5 * 1000), dihitung server
     assert.strictEqual(body.data.lockedAt, null);
     batchId = body.data.batchId;
   });
@@ -132,55 +129,71 @@ describe('HTTP API v1: Dataset Batches, Groups, Sessions & Lock (Fase 3)', () =>
     assert.strictEqual(res.status, 422);
   });
 
-  it('2b. POST /batches menolak sizeGrade bukan bilangan bulat ≥ 1 (422)', async () => {
-    for (const sizeGrade of [0, 1.5, 'uniform_medium', '']) {
+  it('2b. POST /batches menurunkan sizeGrade kiriman dan mewajibkan shrimpLengthCm', async () => {
+    // Nilai sizeGrade kiriman diabaikan: server selalu menghitung
+    // jumlah ekor ÷ berat (gram) × 1000 lalu membulatkan.
+    const ignored = await createBatch(
+      new Request('http://localhost:3000/api/v1/batches', {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify(batchBody({ sizeGrade: 9999 })),
+      })
+    );
+    assert.strictEqual(ignored.status, 201);
+    assert.strictEqual((await ignored.json()).data.sizeGrade, 25); // Math.round(12 / 485.5 * 1000)
+
+    // Panjang wajib 1–50 cm.
+    for (const shrimpLengthCm of [0, 60, '', 'dua belas']) {
       const res = await createBatch(
         new Request('http://localhost:3000/api/v1/batches', {
           method: 'POST',
           headers: postHeaders(adminCookie),
-          body: JSON.stringify(batchBody({ sizeGrade })),
+          body: JSON.stringify(batchBody({ shrimpLengthCm })),
         })
       );
-      assert.strictEqual(res.status, 422, `sizeGrade ${JSON.stringify(sizeGrade)} harus ditolak`);
+      assert.strictEqual(res.status, 422, `shrimpLengthCm ${JSON.stringify(shrimpLengthCm)} harus ditolak`);
     }
   });
 
-  it('3. POST /batches menolak urutan waktu perjalanan yang mustahil (422)', async () => {
-    const reversed = await createBatch(
+  it('2c. POST /batches menolak initialCondition lama fresh_dead (422)', async () => {
+    const res = await createBatch(
       new Request('http://localhost:3000/api/v1/batches', {
         method: 'POST',
         headers: postHeaders(adminCookie),
-        body: JSON.stringify(
-          batchBody({ departedAtUtc: `${DAY}T05:00:00.000Z`, arrivedAtUtc: `${DAY}T02:00:00.000Z` })
-        ),
+        body: JSON.stringify(batchBody({ initialCondition: 'fresh_dead' })),
       })
     );
-    assert.strictEqual(reversed.status, 422);
-
-    // Belanja tercatat sebelum berangkat dari lab → tolak 422, bukan 500.
-    const beforeDeparture = await createBatch(
-      new Request('http://localhost:3000/api/v1/batches', {
-        method: 'POST',
-        headers: postHeaders(adminCookie),
-        body: JSON.stringify(batchBody({ procuredAtUtc: `${DAY}T00:00:00.000Z` })), // 07:00 WIB, berangkat 07:15
-      })
-    );
-    assert.strictEqual(beforeDeparture.status, 422);
+    assert.strictEqual(res.status, 422);
     assert.strictEqual(
-      (await beforeDeparture.json()).error.message,
-      'Waktu berangkat (dari lab) harus sebelum waktu beli udang di pasar'
+      (await res.json()).error.message,
+      'Field "initialCondition" harus dead atau alive'
     );
+  });
 
-    // Belanja tercatat sesudah tiba kembali di lab → juga tolak.
-    const afterArrival = await createBatch(
+  it('3. POST /batches menolak tiba sebelum/saat beli (422)', async () => {
+    // Tiba sebelum beli → tolak 422, bukan 500.
+    const early = await createBatch(
       new Request('http://localhost:3000/api/v1/batches', {
         method: 'POST',
         headers: postHeaders(adminCookie),
-        body: JSON.stringify(batchBody({ arrivedAtUtc: '2099-02-01T23:45:00.000Z' })), // tiba 06:45 WIB, beli 07:30
+        body: JSON.stringify(batchBody({ arrivedAtUtc: `${DAY}T00:00:00.000Z` })), // tiba 07:00 WIB, beli 07:30
       })
     );
-    assert.strictEqual(afterArrival.status, 422);
-    assert.strictEqual((await afterArrival.json()).error.message, 'Waktu tiba di lab harus setelah waktu beli udang');
+    assert.strictEqual(early.status, 422);
+    assert.strictEqual(
+      (await early.json()).error.message,
+      'Tanggal dan jam tiba harus setelah tanggal dan jam beli'
+    );
+
+    // Tiba tepat saat beli → juga tolak (urutan ketat).
+    const equal = await createBatch(
+      new Request('http://localhost:3000/api/v1/batches', {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify(batchBody({ arrivedAtUtc: PROCURED })),
+      })
+    );
+    assert.strictEqual(equal.status, 422);
   });
 
   it('4. POST /batches menolak cold-chain >3 jam tanpa deviasi (422) dan menerima dengan deviasi', async () => {
@@ -461,6 +474,7 @@ describe('HTTP API v1: Dataset Batches, Groups, Sessions & Lock (Fase 3)', () =>
 
     const photoForm = new FormData();
     photoForm.append('photos', new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'awal.jpg', { type: 'image/jpeg' }));
+    photoForm.append('captions', JSON.stringify(['Di pasar']));
     const photoReq = new Request(`http://localhost:3000/api/v1/batches/${batchId}/photos`, {
       method: 'POST',
       headers: { Cookie: adminCookie, Origin: 'http://localhost:3000', Host: 'localhost:3000' },

@@ -3,6 +3,7 @@ import {
   isColdChainCompliant,
   isProcurementWindow,
   transportDurationMs,
+  MAX_PHOTO_CAPTION_LENGTH,
   type StorageConditionCode,
 } from '../../shared/dataset.ts';
 
@@ -14,15 +15,14 @@ import {
  */
 
 export type ApiSourceType = 'market' | 'farm';
-export type ApiInitialCondition = 'fresh_dead' | 'dead' | 'alive';
+export type ApiInitialCondition = 'dead' | 'alive';
 export type ApiVisualCheck = 'normal' | 'melanosis' | 'damaged' | 'mixed_species';
 
 const SOURCE_TO_DB = { market: 'MARKET', farm: 'FARM' } as const;
 const DB_TO_SOURCE: Record<string, ApiSourceType> = { MARKET: 'market', FARM: 'farm' };
 
-const CONDITION_TO_DB = { fresh_dead: 'FRESH_DEAD', dead: 'DEAD', alive: 'ALIVE' } as const;
+const CONDITION_TO_DB = { dead: 'DEAD', alive: 'ALIVE' } as const;
 const DB_TO_CONDITION: Record<string, ApiInitialCondition> = {
-  FRESH_DEAD: 'fresh_dead',
   DEAD: 'dead',
   ALIVE: 'alive',
 };
@@ -54,11 +54,11 @@ export function parseSourceType(val: unknown): 'MARKET' | 'FARM' {
   throw validationError('Field "sourceType" harus "market" atau "farm"');
 }
 
-export function parseInitialCondition(val: unknown): 'FRESH_DEAD' | 'DEAD' | 'ALIVE' {
-  if (val === 'fresh_dead' || val === 'dead' || val === 'alive') {
+export function parseInitialCondition(val: unknown): 'DEAD' | 'ALIVE' {
+  if (val === 'dead' || val === 'alive') {
     return CONDITION_TO_DB[val];
   }
-  throw validationError('Field "initialCondition" harus fresh_dead, dead, atau alive');
+  throw validationError('Field "initialCondition" harus dead atau alive');
 }
 
 export function parseVisualCheck(val: unknown): 'NORMAL' | 'MELANOSIS' | 'DAMAGED' | 'MIXED_SPECIES' {
@@ -106,6 +106,18 @@ export function parseIntMinimum(val: unknown, fieldName: string, min: number): n
   return val;
 }
 
+/** Caption foto: wajib terisi (maks 140 karakter) agar tiap foto bisa dibedakan. */
+export function parsePhotoCaption(val: unknown, index: number): string {
+  const caption = typeof val === 'string' ? val.trim() : '';
+  if (caption === '') {
+    throw validationError(`Caption foto ke-${index + 1} wajib diisi (maks ${MAX_PHOTO_CAPTION_LENGTH} karakter)`);
+  }
+  if (caption.length > MAX_PHOTO_CAPTION_LENGTH) {
+    throw validationError(`Caption foto ke-${index + 1} maksimal ${MAX_PHOTO_CAPTION_LENGTH} karakter`);
+  }
+  return caption;
+}
+
 /** Decimal Prisma → number JSON; null lolos apa adanya. */
 export function dec(val: { toNumber(): number } | null | undefined): number | null {
   if (val === null || val === undefined) return null;
@@ -122,18 +134,15 @@ type DbBatch = {
   sourceType: string;
   shrimpCount: number;
   sizeGrade: number;
+  shrimpLengthCm: { toNumber(): number } | null;
   totalWeightG: { toNumber(): number };
   initialCondition: string;
   initialTempC: { toNumber(): number };
-  departedAtUtc: Date;
   arrivedAtUtc: Date;
   coolerTempMinC: { toNumber(): number };
   coolerTempMaxC: { toNumber(): number };
   iceToShrimpRatio: string;
-  tempStartC: { toNumber(): number };
-  tempEndC: { toNumber(): number };
   rejectionNotes: string | null;
-  photoUrls: string[];
   lockedAt: Date | null;
   createdAt: Date;
 };
@@ -147,18 +156,15 @@ export function serializeBatch(b: DbBatch) {
     sourceType: DB_TO_SOURCE[b.sourceType] ?? b.sourceType,
     shrimpCount: b.shrimpCount,
     sizeGrade: b.sizeGrade,
+    shrimpLengthCm: dec(b.shrimpLengthCm),
     totalWeightG: dec(b.totalWeightG),
     initialCondition: DB_TO_CONDITION[b.initialCondition] ?? b.initialCondition,
     initialTempC: dec(b.initialTempC),
-    departedAtUtc: b.departedAtUtc.toISOString(),
     arrivedAtUtc: b.arrivedAtUtc.toISOString(),
     coolerTempMinC: dec(b.coolerTempMinC),
     coolerTempMaxC: dec(b.coolerTempMaxC),
     iceToShrimpRatio: b.iceToShrimpRatio,
-    tempStartC: dec(b.tempStartC),
-    tempEndC: dec(b.tempEndC),
     rejectionNotes: b.rejectionNotes,
-    photoUrls: b.photoUrls,
     lockedAt: iso(b.lockedAt),
     createdAt: b.createdAt.toISOString(),
   };
@@ -173,9 +179,9 @@ type DbGroup = {
   targetTempC: { toNumber(): number };
   labTempC: { toNumber(): number };
   visualCheck: string;
-  labWeightG: { toNumber(): number };
+  labWeightBeforeG: { toNumber(): number };
+  labWeightAfterG: { toNumber(): number } | null;
   sampleShrimpCount: number;
-  sampleWeightG: { toNumber(): number };
   createdAt: Date;
 };
 
@@ -189,9 +195,9 @@ export function serializeGroup(g: DbGroup) {
     targetTempC: dec(g.targetTempC),
     labTempC: dec(g.labTempC),
     visualCheck: DB_TO_VISUAL[g.visualCheck] ?? g.visualCheck,
-    labWeightG: dec(g.labWeightG),
+    labWeightBeforeG: dec(g.labWeightBeforeG),
+    labWeightAfterG: dec(g.labWeightAfterG),
     sampleShrimpCount: g.sampleShrimpCount,
-    sampleWeightG: dec(g.sampleWeightG),
     createdAt: g.createdAt.toISOString(),
   };
 }
@@ -252,25 +258,21 @@ export function serializeSession(s: DbSession) {
 }
 
 /**
- * GATE B: urutan waktu perjalanan lab → pasar → lab. Belanja terjadi di
- * pasar, sehingga waktu beli wajib berada DI ANTARA berangkat dan tiba;
- * durasi berangkat → tiba >3 jam tetap butuh pengakuan deviasi eksplisit.
+ * GATE B: urutan waktu beli → tiba di lab. Cukup dua titik waktu ini yang
+ * dicatat; durasi tiba dikurangi beli >3 jam tetap butuh pengakuan
+ * deviasi eksplisit.
  */
 export function assertTransportGates(
   procuredAtUtc: Date,
-  departedAtUtc: Date,
   arrivedAtUtc: Date,
   deviationAcknowledged: unknown
 ): void {
   // `<= 0` (bukan `< 0`) karena cek DB menuntut urutan ketat, jadi waktu yang
   // sama persis pun harus ditolak di lapisan aplikasi.
-  if (transportDurationMs(departedAtUtc, procuredAtUtc) <= 0) {
-    throw validationError('Waktu berangkat (dari lab) harus sebelum waktu beli udang di pasar');
-  }
   if (transportDurationMs(procuredAtUtc, arrivedAtUtc) <= 0) {
-    throw validationError('Waktu tiba di lab harus setelah waktu beli udang');
+    throw validationError('Tanggal dan jam tiba harus setelah tanggal dan jam beli');
   }
-  if (!isColdChainCompliant(departedAtUtc, arrivedAtUtc) && deviationAcknowledged !== true) {
+  if (!isColdChainCompliant(procuredAtUtc, arrivedAtUtc) && deviationAcknowledged !== true) {
     throw validationError(
       'Durasi transportasi melebihi 3 jam; ulangi dengan deviationAcknowledged=true untuk mencatat sebagai deviasi'
     );
