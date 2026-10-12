@@ -47,6 +47,21 @@ export async function processTelemetryMessage(
     let messageId = 'unknown';
     let payloadSha256 = '';
 
+    // Best-effort: catat nasib pesan untuk endpoint kesehatan ingest.
+    // Kegagalan pencatatan ditelan agar tak pernah menggagalkan pipeline.
+    const noteOutcome = (outcome: string): void => {
+      void storage
+        .recordIngestOutcome(parsedTopicDeviceId || 'unknown', outcome, receivedAt)
+        .catch((err) => {
+          logger.debug({
+            operation: 'ingest_outcome',
+            outcome: 'note_failed',
+            device_id: parsedTopicDeviceId || 'unknown',
+            message: err instanceof Error ? err.message : String(err),
+          });
+        });
+    };
+
     const createRejectAck = (reasonCode: AckRejectReason): PipelineOutcome => {
       const durationMs = Date.now() - startTime;
       const ack: ApplicationAck = {
@@ -66,6 +81,8 @@ export async function processTelemetryMessage(
         message_id: messageId,
         duration_ms: durationMs,
       });
+
+      noteOutcome(`rejected:${reasonCode}`);
 
       return {
         status: 'rejected',
@@ -153,6 +170,8 @@ export async function processTelemetryMessage(
             duration_ms: durationMs,
           });
 
+          noteOutcome('duplicate');
+
           return {
             status: 'duplicate',
             ack,
@@ -181,6 +200,7 @@ export async function processTelemetryMessage(
         message_id: messageId,
         message: err instanceof Error ? err.message : String(err),
       });
+      noteOutcome('error:storage_error');
       throw err;
     }
 
@@ -307,6 +327,8 @@ export async function processTelemetryMessage(
       reading_id: inserted.readingId,
       duration_ms: durationMs,
     });
+
+    noteOutcome(outcomeStatus === 'accepted' ? 'stored' : 'stored_unresolved_time');
 
     return {
       status: outcomeStatus,

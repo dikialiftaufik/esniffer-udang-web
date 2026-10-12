@@ -51,6 +51,13 @@ export interface TelemetryStoragePort {
     receivedAt: Date
   ): Promise<string>;
   insertReading(record: NewReadingRecord): Promise<{ readingId: string }>;
+  /**
+   * Catat nasib satu pesan ingest (mis. "stored", "duplicate",
+   * "rejected:ASSIGNMENT_NOT_FOUND") ke bucket per jam. Best-effort:
+   * pemanggil wajib menelan error agar pencatatan tak pernah
+   * menggagalkan pipeline.
+   */
+  recordIngestOutcome(mqttDeviceId: string, outcome: string, receivedAt: Date): Promise<void>;
 }
 
 export interface NewReadingRecord {

@@ -141,6 +141,28 @@ export async function GET(
     const hasMore = readings.length > limit;
     const items = hasMore ? readings.slice(0, limit) : readings;
 
+    // Baris eligible yang lebih baru dari snapshot (di atas watermark):
+    // sudah tersimpan dan tampil di grafik, tapi ikut tabel/unduhan berikutnya.
+    const pendingWhere: Prisma.SensorReadingWhereInput = {
+      chamberId: chamber.id,
+      measurementTimeQuality: { in: ['SYNCED', 'RECONSTRUCTED'] },
+      measuredAt: {
+        gte: fromDate,
+        lte: toDate,
+      },
+      historySequence: {
+        gt: snapshotWatermark,
+      },
+    };
+    if (filterDeviceId) {
+      if (UUID_REGEX.test(filterDeviceId)) {
+        pendingWhere.deviceId = filterDeviceId;
+      } else {
+        pendingWhere.device = { mqttDeviceId: filterDeviceId };
+      }
+    }
+    const aboveWatermarkCount = await prisma.sensorReading.count({ where: pendingWhere });
+
     let nextCursor: string | null = null;
     if (hasMore && items.length > 0) {
       const last = items[items.length - 1];
@@ -208,6 +230,7 @@ export async function GET(
       nextCursor,
       limit,
       snapshotWatermark: snapshotWatermark.toString(),
+      aboveWatermarkCount,
     });
   } catch (err) {
     return errorResponse(err, requestId, request);

@@ -46,6 +46,23 @@ export class PrismaTelemetryStorage implements TelemetryStoragePort {
     await this.client.$queryRaw`SELECT 1`;
   }
 
+  /**
+   * Tambah 1 ke bucket (alat, outcome, jam) — atomik via upsert.
+   * Outcome dibatasi 48 karakter oleh skema; pemanggil memakai
+   * kosakata tetap ("stored", "duplicate", "rejected:<ALASAN>", ...).
+   */
+  async recordIngestOutcome(mqttDeviceId: string, outcome: string, receivedAt: Date): Promise<void> {
+    const windowStart = new Date(receivedAt);
+    windowStart.setUTCMinutes(0, 0, 0);
+    await this.client.ingestOutcome.upsert({
+      where: {
+        mqttDeviceId_outcome_windowStart: { mqttDeviceId, outcome, windowStart },
+      },
+      update: { count: { increment: 1 } },
+      create: { mqttDeviceId, outcome, windowStart, count: 1 },
+    });
+  }
+
   async findCommittedReading(
     deviceIdOrMqttId: string,
     messageId: string

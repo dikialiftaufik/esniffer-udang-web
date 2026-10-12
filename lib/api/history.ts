@@ -75,6 +75,35 @@ export function nextCursorOf(payload: unknown): string | null {
   return typeof cursor === 'string' && cursor !== '' ? cursor : null;
 }
 
+export interface HistoryMeta {
+  snapshotWatermark: string | null;
+  aboveWatermarkCount: number;
+}
+
+/**
+ * Mengambil info jendela kebenaran dari payload API history: watermark
+ * snapshot yang dipakai halaman ini + jumlah baris eligible yang lebih baru
+ * dari watermark (sudah di grafik, ikut tabel berikutnya). Tak pernah
+ * melempar; payload rusak menghasilkan nilai kosong.
+ */
+export function historyMetaOf(payload: unknown): HistoryMeta {
+  const empty: HistoryMeta = { snapshotWatermark: null, aboveWatermarkCount: 0 };
+  if (typeof payload !== 'object' || payload === null) {
+    return empty;
+  }
+  const meta = (payload as { meta?: unknown }).meta;
+  if (typeof meta !== 'object' || meta === null) {
+    return empty;
+  }
+  const record = meta as Record<string, unknown>;
+  const watermark = typeof record.snapshotWatermark === 'string' ? record.snapshotWatermark : null;
+  const above =
+    typeof record.aboveWatermarkCount === 'number' && Number.isFinite(record.aboveWatermarkCount)
+      ? Math.max(0, Math.floor(record.aboveWatermarkCount))
+      : 0;
+  return { snapshotWatermark: watermark, aboveWatermarkCount: above };
+}
+
 /**
  * Meratakan seluruh payload respons API history. Payload bukan array
  * menghasilkan daftar kosong; entri rusak dilewati satu per satu.

@@ -330,3 +330,22 @@ model HistorySequenceWatermark {
 
   @@map("history_sequence_watermark")
 }
+
+/**
+ * Agregat nasib pesan ingest per alat per jam. Worker mencatat tiap pesan
+ * (tersimpan, duplikat, ditolak beserta alasannya, dibuang antre penuh)
+ * sehingga endpoint kesehatan bisa menjawab "data saya ke mana?" tanpa
+ * membaca log. Baris dihitung naik (count), bukan satu baris per pesan.
+ */
+model IngestOutcome {
+  id           String   @id @default(uuid()) @db.Uuid
+  mqttDeviceId String   @map("mqtt_device_id") @db.VarChar(64)
+  outcome      String   @db.VarChar(48)
+  windowStart  DateTime @map("window_start") @db.Timestamptz(3)
+  count        Int      @default(1)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([mqttDeviceId, outcome, windowStart])
+  @@index([windowStart])
+  @@map("ingest_outcomes")
+}
