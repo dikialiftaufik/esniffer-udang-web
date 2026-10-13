@@ -47,6 +47,9 @@ next-env.d.ts
 diki/
 docs/
 
+# generated knowledge-graph output (regenerable via graphify; see graphify-out/manifest.json)
+graphify-out/
+
 # mosquitto secrets and persistence data
 docker/mosquitto/config/passwords.txt
 docker/mosquitto/data/
