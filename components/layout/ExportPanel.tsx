@@ -310,12 +310,6 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                 </div>
                 <p className="mt-1.5 text-[11px] font-mono text-white/50">
                   Rentang {rangeParam} · 15 baris/halaman · Halaman {historyPage}
-                  <span
-                    className="ml-1 text-white/35"
-                    title="Nomor urut data terakhir yang dipakai sebagai patokan agar halaman tidak bergeser saat data baru masuk"
-                  >
-                    · Watermark #{watermark ?? '—'}
-                  </span>
                 </p>
               </div>
               <button
