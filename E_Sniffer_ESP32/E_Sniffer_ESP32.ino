@@ -522,6 +522,20 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
+  // Pindai sekali saat boot: radio ESP32 hanya 2,4 GHz, sehingga hotspot HP
+  // yang berjalan di 5 GHz tidak akan muncul di daftar ini.
+  {
+    const int n = WiFi.scanNetworks();
+    Serial.printf("[WIFI] scan: %d jaringan 2,4 GHz terlihat\n", n);
+    bool targetTerlihat = false;
+    for (int i = 0; i < n; ++i) {
+      Serial.printf("[WIFI]   - \"%s\" rssi=%d\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i));
+      if (WiFi.SSID(i) == WIFI_SSID) targetTerlihat = true;
+    }
+    if (!targetTerlihat) {
+      Serial.printf("[WIFI] TARGET \"%s\" TAK TERLIHAT — paksa hotspot ke pita 2,4 GHz (bukan 5 GHz)\n", WIFI_SSID);
+    }
+  }
   if (String(WIFI_SSID).length() == 0 || String(WIFI_SSID) == "ISI_WIFI_SSID") {
     Serial.println("[WIFI] ERROR: SSID masih placeholder — isi WIFI_SSID/WIFI_PASSWORD asli sebelum upload!");
   }
