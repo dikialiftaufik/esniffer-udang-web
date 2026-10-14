@@ -573,7 +573,7 @@ export default function NewBatchPage() {
         <div className="grid grid-cols-2 gap-3">
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-labTempC`}>
-              Suhu tusuk saat tiba (°C)
+              Suhu dalam udang saat tiba (°C)
               {reqMark}
             </label>
             <input
@@ -598,7 +598,7 @@ export default function NewBatchPage() {
           </div>
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-visualCheck`}>
-              Temuan visual
+              Temuan visual udang
               {reqMark}
             </label>
             <select
@@ -626,7 +626,7 @@ export default function NewBatchPage() {
             {fieldMessage(`${prefix}-visualCheck`)}
             {g.visualCheck !== 'normal' && (
               <p className="text-[11px] font-mono text-amber-300" role="status">
-                Temuan abnormal: catat detailnya di catatan seleksi batch dan foto ulang sebelum lock.
+                Temuan abnormal: foto ulang kondisi udang sebelum lock.
               </p>
             )}
           </div>
@@ -634,7 +634,7 @@ export default function NewBatchPage() {
         <div className="grid grid-cols-3 gap-3">
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-sampleShrimpCount`}>
-              Ekor per sesi
+              Jumlah udang per sesi (ekor)
               {reqMark}
             </label>
             <input
@@ -654,12 +654,12 @@ export default function NewBatchPage() {
             {fieldErrors[`${prefix}-sampleShrimpCount`] ? (
               fieldMessage(`${prefix}-sampleShrimpCount`)
             ) : (
-              <p className={hintCls}>3–5 ekor.</p>
+              <p className={hintCls}>3–5 ekor per sesi.</p>
             )}
           </div>
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-labWeightBeforeG`}>
-              Berat sebelum observasi (g)
+              Berat sampel sebelum observasi (g)
               {reqMark}
             </label>
             <input
@@ -679,12 +679,12 @@ export default function NewBatchPage() {
             {fieldErrors[`${prefix}-labWeightBeforeG`] ? (
               fieldMessage(`${prefix}-labWeightBeforeG`)
             ) : (
-              <p className={hintCls}>Ditimbang saat tiba, isi di tiap kartu.</p>
+              <p className={hintCls}>Timbang udang sampel grup ini saat tiba di lab.</p>
             )}
           </div>
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-labWeightAfterG`}>
-              Berat sesudah observasi (g)
+              Berat sampel sesudah observasi (g)
               {reqMark}
             </label>
             <input
@@ -704,7 +704,7 @@ export default function NewBatchPage() {
             {fieldErrors[`${prefix}-labWeightAfterG`] ? (
               fieldMessage(`${prefix}-labWeightAfterG`)
             ) : (
-              <p className={hintCls}>Ditimbang setelah sesi terakhir kartu ini.</p>
+              <p className={hintCls}>Timbang ulang udang yang sama setelah sesi terakhir grup ini.</p>
             )}
           </div>
         </div>
@@ -898,19 +898,20 @@ export default function NewBatchPage() {
           </div>
           <div className={fieldCls}>
             <span className={labelCls}>
-              Kondisi awal
+              Kondisi awal udang
               {reqMark}
             </span>
             {radioRow('initialCondition', initialCondition, setInitialCondition, [
-              ['dead', 'Mati'],
-              ['alive', 'Hidup'],
+              ['dead', 'Mati saat dibeli'],
+              ['alive', 'Hidup saat dibeli'],
             ])}
+            <p className={hintCls}>Kondisi udang saat dibeli.</p>
           </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className={fieldCls}>
               <label className={labelCls} htmlFor="shrimpCount">
-                Jumlah ekor
+                Jumlah total udang (ekor)
                 {reqMark}
               </label>
               <input
@@ -940,10 +941,10 @@ export default function NewBatchPage() {
             })}
           </div>
           <div className="grid grid-cols-2 gap-3">
-            {numberField('totalWeightG', 'Berat total (gram)', totalWeightG, (v) => {
+            {numberField('totalWeightG', 'Berat total udang (gram)', totalWeightG, (v) => {
               setTotalWeightG(v);
               revalidateLive(0, { totalWeightG: fieldErrors.totalWeightG });
-            }, { placeholder: '485.5…', hint: 'Timbang dengan timbangan digital.' })}
+            }, { placeholder: '485.5…', hint: 'Timbang seluruh udang sekaligus.' })}
             {numberField('initialTempC', 'Suhu awal udang (°C)', initialTempC, (v) => {
               changeInitialTempC(v);
               revalidateLive(0, { initialTempC: fieldErrors.initialTempC });

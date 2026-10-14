@@ -77,7 +77,7 @@ const dtFmt = new Intl.DateTimeFormat('id-ID', {
 const numFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
 
 const SOURCE_LABEL: Record<string, string> = { market: 'Pasar', farm: 'Tambak' };
-const CONDITION_LABEL: Record<string, string> = { alive: 'Hidup', dead: 'Mati' };
+const CONDITION_LABEL: Record<string, string> = { alive: 'Hidup saat dibeli', dead: 'Mati saat dibeli' };
 const VISUAL_LABEL: Record<string, string> = {
   normal: 'Normal',
   melanosis: 'Melanosis (bintik hitam)',
@@ -543,9 +543,9 @@ export default function BatchDetailPage() {
             <DataPair label="Durasi beli ke tiba" value={durationText(batch.procuredAtUtc, batch.arrivedAtUtc)} />
             <DataPair label="Sumber pasar" value={batch.marketSource} />
             <DataPair label="Jenis sumber" value={SOURCE_LABEL[batch.sourceType] ?? batch.sourceType} />
-            <DataPair label="Kondisi awal" value={CONDITION_LABEL[batch.initialCondition] ?? batch.initialCondition} />
-            <DataPair label="Jumlah ekor" value={num(batch.shrimpCount)} />
-            <DataPair label="Berat total (g)" value={num(batch.totalWeightG, ' g')} />
+            <DataPair label="Kondisi awal udang" value={CONDITION_LABEL[batch.initialCondition] ?? batch.initialCondition} />
+            <DataPair label="Jumlah total udang (ekor)" value={num(batch.shrimpCount)} />
+            <DataPair label="Berat total udang (g)" value={num(batch.totalWeightG, ' g')} />
             <DataPair label="Panjang udang (cm)" value={num(batch.shrimpLengthCm, ' cm')} />
             <DataPair label="Ukuran (ekor/kg)" value={num(batch.sizeGrade)} />
             <DataPair label="Suhu awal udang (°C)" value={num(batch.initialTempC, ' °C')} />
@@ -557,8 +557,6 @@ export default function BatchDetailPage() {
                   : `${num(batch.coolerTempMinC)} – ${num(batch.coolerTempMaxC, ' °C')}`
               }
             />
-            <DataPair label="Rasio es : udang" value={batch.iceToShrimpRatio} />
-            <DataPair label="Catatan penolakan" value={batch.rejectionNotes ?? EM_DASH} />
           </dl>
         </div>
 
@@ -578,12 +576,11 @@ export default function BatchDetailPage() {
                   {g.groupId} • {g.storageCondition === 'cold' ? 'Suhu Dingin (4 ± 1 °C)' : 'Suhu Ruang (25 ± 2 °C)'}
                 </p>
                 <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3 mt-1.5">
-                  <DataPair label="Target suhu (°C)" value={num(g.targetTempC, ' °C')} />
-                  <DataPair label="Suhu tusuk saat tiba (°C)" value={num(g.labTempC, ' °C')} />
-                  <DataPair label="Temuan visual" value={VISUAL_LABEL[g.visualCheck] ?? g.visualCheck} />
-                  <DataPair label="Ekor per sesi" value={num(g.sampleShrimpCount)} />
-                  <DataPair label="Berat sebelum observasi (g)" value={num(g.labWeightBeforeG, ' g')} />
-                  <DataPair label="Berat sesudah observasi (g)" value={num(g.labWeightAfterG, ' g')} />
+                  <DataPair label="Suhu dalam udang saat tiba (°C)" value={num(g.labTempC, ' °C')} />
+                  <DataPair label="Temuan visual udang" value={VISUAL_LABEL[g.visualCheck] ?? g.visualCheck} />
+                  <DataPair label="Jumlah udang per sesi (ekor)" value={num(g.sampleShrimpCount)} />
+                  <DataPair label="Berat sampel sebelum observasi (g)" value={num(g.labWeightBeforeG, ' g')} />
+                  <DataPair label="Berat sampel sesudah observasi (g)" value={num(g.labWeightAfterG, ' g')} />
                 </dl>
               </div>
             ))}
