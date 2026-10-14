@@ -149,9 +149,6 @@ export default function BatchesPage() {
           <h2 className="text-xl md:text-2xl font-mono font-black text-white tracking-widest">
             PENCATATAN DATASET
           </h2>
-          <p className="text-xs font-mono text-white/60 mt-1">
-            Protokol pengumpulan udang windu: pasar → cold-chain → lab → sensor
-          </p>
         </div>
         {user.role === 'ADMIN' && (
           <div className="flex items-center gap-2">
