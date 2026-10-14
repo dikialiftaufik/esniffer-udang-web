@@ -6,7 +6,7 @@ import { jsonResponse, errorResponse, getRequestId } from '../../../../../../lib
 import { conflict, notFound, payloadTooLarge, validationError } from '../../../../../../lib/api/errors.ts';
 import { parsePhotoCaption } from '../../../../../../lib/api/dataset.ts';
 import { logger } from '../../../../../../lib/logging/logger.ts';
-import { MAX_BATCH_PHOTOS, MAX_PHOTO_BYTES } from '../../../../../../shared/dataset.ts';
+import { MAX_PHOTO_BYTES } from '../../../../../../shared/dataset.ts';
 
 const ALLOWED_TYPES: Record<string, string> = {
   'image/jpeg': '.jpg',
@@ -42,9 +42,9 @@ function assertOwnedUrl(url: unknown, prefix: string, batchId: string): string {
 
 /**
  * Upload foto dokumentasi batch (ADMIN, multi-file, lokal).
- * Syarat: batch ada + belum terkunci, maks 10 file @5MB jpg/png,
+ * Syarat: batch ada + belum terkunci, tiap file maks 5MB jpg/png,
  * tiap file wajib membawa caption (field "captions": array JSON
- * string sejajar urutan file "photos").
+ * string sejajar urutan file "photos"). Jumlah foto tidak dibatasi.
  */
 export async function POST(
   request: Request,
@@ -89,12 +89,8 @@ export async function POST(
     }
     const parsedCaptions = captions.map((c, i) => parsePhotoCaption(c, i));
 
+    // Offset penomoran file agar tidak tabrakan dengan foto yang sudah ada.
     const existing = await prisma.batchPhoto.count({ where: { batchId } });
-    if (existing + files.length > MAX_BATCH_PHOTOS) {
-      throw payloadTooLarge(
-        `Maksimal ${MAX_BATCH_PHOTOS} foto per batch (sudah ada ${existing})`
-      );
-    }
     for (const file of files) {
       if (!(file.type in ALLOWED_TYPES)) {
         throw validationError(`File "${file.name}" harus jpg/png`);

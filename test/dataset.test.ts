@@ -7,7 +7,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DatasetValidationError,
-  MAX_BATCH_PHOTOS,
   MAX_PHOTO_BYTES,
   isValidBatchId,
   isValidGroupId,
@@ -121,8 +120,7 @@ test('Jendela pengadaan: hanya 06:00–08:00 WIB', () => {
   assert.ok(!isProcurementWindow(new Date('2026-10-02T02:00:00.000Z'))); // 09:00 WIB
 });
 
-test('Batas foto MVP: 10 file @5MB', () => {
-  assert.strictEqual(MAX_BATCH_PHOTOS, 10);
+test('Batas foto: tiap file maks 5MB, jumlah tidak dibatasi', () => {
   assert.strictEqual(MAX_PHOTO_BYTES, 5 * 1024 * 1024);
 });
 

@@ -16,8 +16,8 @@ export class DatasetValidationError extends Error {
 // WIB = UTC+7, tanpa DST. Offset dibuat eksplisit agar tidak bergantung TZ server.
 export const WIB_OFFSET_MINUTES = 7 * 60;
 
-// Batas foto MVP (PRD §3.1): maks 10 file @5MB, caption maks 140 karakter.
-export const MAX_BATCH_PHOTOS = 10;
+// Batas foto (PRD §3.1): tiap file maks 5MB, caption maks 140 karakter.
+// Jumlah foto per batch tidak dibatasi.
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 export const MAX_PHOTO_CAPTION_LENGTH = 140;
 

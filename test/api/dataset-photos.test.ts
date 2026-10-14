@@ -160,15 +160,16 @@ describe('HTTP API v1: Dataset Batch Photos Upload (Fase 4)', () => {
     assert.strictEqual(res.status, 422);
   });
 
-  it('3. File >5MB dan total >10 foto ditolak (413)', async () => {
+  it('3. File >5MB ditolak (413); jumlah foto tidak dibatasi', async () => {
     const big = await photoReq(batchId, adminCookie, [
       { name: 'besar.jpg', type: 'image/jpeg', bytes: new Uint8Array(6 * 1024 * 1024) },
     ]);
     assert.strictEqual(big.status, 413);
 
     const many = Array.from({ length: 9 }, (_, i) => ({ ...JPG, name: `f${i}.jpg` }));
-    const over = await photoReq(batchId, adminCookie, many); // 2 + 9 = 11 > 10
-    assert.strictEqual(over.status, 413);
+    const over = await photoReq(batchId, adminCookie, many); // 2 + 9 = 11 foto: tetap diterima
+    assert.strictEqual(over.status, 201);
+    assert.strictEqual((await over.json()).data.photos.length, 11);
   });
 
   it('4. Tanpa file, tanpa auth, dan VIEWER ditolak (422/401/403)', async () => {

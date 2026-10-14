@@ -8,7 +8,6 @@ import {
   isColdChainCompliant,
   transportDurationMs,
   wibInputToUtc,
-  MAX_BATCH_PHOTOS,
   MAX_PHOTO_CAPTION_LENGTH,
   DatasetValidationError,
 } from '../../../shared/dataset.ts';
@@ -353,14 +352,7 @@ export default function NewBatchPage() {
     if (fitting.length < usable.length) {
       setFieldErrors((prev) => ({ ...prev, photos: 'Tiap foto maksimal 5 MB. File lebih besar dilewati.' }));
     }
-    const room = MAX_BATCH_PHOTOS - photoFiles.length;
-    const accepted = fitting.slice(0, Math.max(room, 0));
-    if (accepted.length < fitting.length) {
-      setFieldErrors((prev) => ({
-        ...prev,
-        photos: `Maksimal ${MAX_BATCH_PHOTOS} foto per batch. Kelebihannya dilewati.`,
-      }));
-    }
+    const accepted = fitting;
     setPhotoFiles((prev) => [...prev, ...accepted]);
     setPhotoPreviews((prev) => [...prev, ...accepted.map((f) => URL.createObjectURL(f))]);
     setPhotoCaptions((prev) => [...prev, ...accepted.map(() => '')]);
@@ -974,7 +966,7 @@ export default function NewBatchPage() {
               onChange={(e) => handlePhotoSelect(e.target.files, e.target)}
               className="text-xs font-mono text-white/60 file:mr-2 file:px-3 file:py-1.5 file:rounded-lg file:bg-white/10 file:border file:border-white/10 file:text-white/80 file:text-xs file:font-mono"
             />
-            <p className={hintCls}>JPG/PNG sampai 5 MB, maksimal 10 (bisa tambah bertahap). Tiap foto wajib ber-caption (mis. di pasar, sebelum chamber). Minimal 1 foto sebelum batch dikunci.</p>
+            <p className={hintCls}>JPG/PNG sampai 5 MB (bisa tambah bertahap, tanpa batas jumlah). Tiap foto wajib ber-caption (mis. di pasar, sebelum chamber). Minimal 1 foto sebelum batch dikunci.</p>
             {fieldErrors.photos && (
               <p className="text-[11px] font-mono text-amber-300" role="status">
                 {fieldErrors.photos}

@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '../../../components/auth/AuthProvider';
 import ConfirmDialog from '../../../components/ui/ConfirmDialog';
 import SuccessNotice, { useSuccessNotice } from '../../../components/ui/SuccessNotice';
-import { TIMEPOINT_SEQUENCES, MAX_BATCH_PHOTOS, MAX_PHOTO_BYTES, MAX_PHOTO_CAPTION_LENGTH } from '../../../shared/dataset.ts';
+import { TIMEPOINT_SEQUENCES, MAX_PHOTO_BYTES, MAX_PHOTO_CAPTION_LENGTH } from '../../../shared/dataset.ts';
 import type { ApiSessionStatus } from '../../../lib/api/dataset.ts';
 
 interface SessionItem {
@@ -300,10 +300,9 @@ export default function BatchDetailPage() {
     const incoming = Array.from(list ?? []);
     const usable = incoming.filter((f) => /image\/(jpeg|png)/.test(f.type) && f.size > 0);
     const fitting = usable.filter((f) => f.size <= MAX_PHOTO_BYTES);
-    const room = Math.max(MAX_BATCH_PHOTOS - (batch?.photos.length ?? 0) - files.length, 0);
-    const accepted = fitting.slice(0, room);
+    const accepted = fitting;
     if (accepted.length < incoming.length) {
-      setError('Ada file yang dilewati: hanya JPG/PNG, maksimal 5 MB, dan maksimal 10 foto per batch.');
+      setError('Ada file yang dilewati: hanya JPG/PNG dan maksimal 5 MB per file.');
     }
     setFiles((prev) => [...prev, ...accepted]);
     setFilePreviews((prev) => [...prev, ...accepted.map((f) => URL.createObjectURL(f))]);
@@ -589,7 +588,7 @@ export default function BatchDetailPage() {
       </div>
 
       <div className={cardCls}>
-        <h3 className="text-sm font-mono font-bold text-white tracking-widest">FOTO DOKUMENTASI ({batch.photos.length}/10)</h3>
+        <h3 className="text-sm font-mono font-bold text-white tracking-widest">FOTO DOKUMENTASI ({batch.photos.length})</h3>
         {batch.photos.length > 0 && (
           <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
             {batch.photos.map((p, i) => (
