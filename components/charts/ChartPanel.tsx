@@ -29,7 +29,12 @@ interface ChartPanelProps {
   chamberId: string;
   /** Waktu ukur terakhir (ISO) dari endpoint latest. Null bila belum pernah ada data. */
   lastMeasuredAt?: string | null;
-  /** True bila data terakhir basi (alat offline). Indikator Live diganti label Riwayat. */
+  /**
+   * @deprecated Tidak lagi dipakai untuk indikator chart.
+   * Indikator Live/Riwayat hanya ditentukan oleh jendela tersemat (pinned),
+   * agar status tetap "Live" walau alat offline. Disimpan opsional supaya
+   * pemanggil lama tidak rusak.
+   */
   isStale?: boolean;
   /** Tick terbaru dari SSE 0,5 dtk. Ditempel sebagai ekor mentah sampai refresh bucket berikutnya. */
   streamTick?: StreamTick | null;
@@ -42,7 +47,7 @@ const RANGE_DURATIONS: Record<TimeRange, number> = {
   '24h': 24 * 60 * 60 * 1000,
 };
 
-export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale = false, streamTick = null }: ChartPanelProps) {
+export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTick = null }: ChartPanelProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -264,8 +269,9 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, isStale =
             ))}
           </div>
 
-          {/* Live / Riwayat Indicator: denyut hanya saat benar-benar live */}
-          {isStale || pinnedWindow ? (
+          {/* Live / Riwayat Indicator: hanya mode jendela (pinned) yang tampil Riwayat.
+              Status Live (cyan, berdenyut) tetap tampil walau alat offline. */}
+          {pinnedWindow ? (
             <div className="flex items-center gap-1.5 pl-1">
               <span className="flex h-2.5 w-2.5 relative">
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400"></span>
