@@ -116,13 +116,21 @@ constexpr uint32_t TELEMETRY_INTERVAL_MS = 500;
 constexpr uint32_t HEARTBEAT_INTERVAL_MS = 15000;
 constexpr uint32_t WIFI_RETRY_MS = 10000;
 constexpr uint32_t MQTT_RETRY_MS = 8000;
+constexpr uint32_t NTP_RETRY_INTERVAL_MS = 30000; // Ulangi SNTP tiap 30 dtk selama jam belum valid
 constexpr uint32_t APP_ACK_TIMEOUT_MS = 12000;
 constexpr int MQ_ADC_SAMPLE_COUNT = 10;
 constexpr uint32_t MQ_ADC_SAMPLE_DELAY_MS = 1;
 
 DHT dht(DHT_PIN, DHT_TYPE);
 HardwareSerial lcdSerial(1);
+// 1 = TLS port 8883 (broker VPS). 0 = plain MQTT port 1883 (broker lokal,
+// tanpa sertifikat). Ganti ke 0 HANYA untuk mode lokal, jangan commit.
+#define MQTT_USE_TLS 1
+#if MQTT_USE_TLS
 WiFiClientSecure tls;
+#else
+WiFiClient plain;
+#endif
 MQTTClient mqtt(1024, 1024); // Cukup untuk MQTT CONNECT+LWT dan JSON ACK
 
 float temperature = NAN, humidity = NAN;
@@ -142,6 +150,8 @@ String lastMqSampleAtUtc;
 uint32_t lastSerialTime = 0, lastTelemetryTime = 0, lastHeartbeatTime = 0;
 uint32_t lastWifiAttempt = 0, lastMqttAttempt = 0;
 bool ntpConfigured = false;
+bool ntpSyncAnnounced = false;
+uint32_t lastNtpAttempt = 0;
 bool wifiAnnounced = false;
 
 // Hanya satu telemetry in-flight; retry memakai EXACT SAME message_id & payload.
@@ -210,11 +220,31 @@ String utcTimestamp() {
 }
 
 void startNtpIfNeeded() {
-  if (ntpConfigured || WiFi.status() != WL_CONNECTED) return;
-  // Tetap WIB untuk Nextion. utcTimestamp() menggunakan gmtime_r().
-  configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  // Jam yang sudah valid boleh dipakai (backend wajib timestamp; mode TLS
+  // juga membutuhkannya untuk verifikasi sertifikat).
+  if (clockReady()) {
+    if (!ntpSyncAnnounced) {
+      ntpSyncAnnounced = true;
+      Serial.printf("[NTP] SYNCED: epoch=%lld (UTC backend; WIB Nextion)\n",
+                    static_cast<long long>(time(nullptr)));
+    }
+    return;
+  }
+
+  const uint32_t now = millis();
+  if (ntpConfigured && now - lastNtpAttempt < NTP_RETRY_INTERVAL_MS) return;
+  const bool retry = ntpConfigured;
   ntpConfigured = true;
-  Serial.println("[NTP] Sinkronisasi dimulai (UTC untuk backend; WIB pada Nextion)");
+  lastNtpAttempt = now;
+
+  // SNTP diulang berkala (bukan sekali saat boot) selama Wi-Fi aktif
+  // tetapi jam belum valid. Tetap WIB untuk Nextion.
+  configTime(7 * 3600, 0, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+  Serial.printf("[NTP] %s sinkronisasi; IP=%s DNS=%s (cek UDP 123 jika gagal)\n",
+                retry ? "Retry" : "Mulai",
+                WiFi.localIP().toString().c_str(), WiFi.dnsIP().toString().c_str());
 }
 
 void updateNextionClock() {
@@ -289,6 +319,14 @@ void printSensorData() {
     isnan(humidity) ? "ERR" : String(humidity, 1).c_str(),
     rawMQ137, rawMQ136, rawMQ4,
     WiFi.status() == WL_CONNECTED, mqtt.connected(), clockReady());
+  // Nol di SEMUA kanal = elektrik (rail daya/wiring putus), bukan udara bersih:
+  // pemanas MQ yang menyala selalu memberi tegangan > 0.
+  if (rawMQ137 == 0 && rawMQ136 == 0 && rawMQ4 == 0) {
+    Serial.println("[SENSOR] WARN: semua MQ=0 — cek VCC/GND modul MQ (tak terkait broker/WiFi)");
+  }
+  if (isnan(temperature) && isnan(humidity)) {
+    Serial.println("[SENSOR] WARN: DHT gagal — cek VCC/DATA/GND DHT22 pin 4");
+  }
 }
 
 void setSensor(JsonObject sensors, const char *name, float value) {
@@ -360,9 +398,10 @@ void handleAck(String &topic, String &payload) {
 
 bool connectMqtt() {
   if (WiFi.status() != WL_CONNECTED || mqtt.connected()) return false;
-  // TLS memerlukan RTC valid untuk memeriksa notBefore / notAfter sertifikat.
+  // Jam valid wajib: backend menolak reading tanpa timestamp (mode TLS
+  // juga membutuhkannya untuk verifikasi sertifikat).
   if (!clockReady()) {
-    Serial.println("[MQTT] Menunggu sinkronisasi NTP sebelum TLS...");
+    Serial.println("[MQTT] Menunggu sinkronisasi NTP...");
     return false;
   }
   ++connectionSequence;
@@ -470,9 +509,13 @@ void setup() {
   topicStatus = "esniffer/v1/devices/" + String(DEVICE_ID) + "/status";
   topicAck = "esniffer/v1/devices/" + String(DEVICE_ID) + "/ack";
 
+  #if MQTT_USE_TLS
   tls.setCACert(MQTT_ROOT_CA_PEM); // VERIFIKASI SERTIFIKAT WAJIB
   tls.setHandshakeTimeout(10);
   mqtt.begin(MQTT_BROKER_HOST, MQTT_BROKER_PORT, tls);
+  #else
+  mqtt.begin(MQTT_BROKER_HOST, MQTT_BROKER_PORT, plain);
+  #endif
   mqtt.setOptions(30, true, 5000);
   mqtt.onMessage(handleAck);
 
@@ -528,6 +571,8 @@ void loop() {
       sendTelemetry(now);
     }
   } else {
+    // Wi-Fi putus sebelum SNTP sukses: izinkan init ulang saat tersambung.
+    ntpConfigured = false;
     tryWifiReconnect(now);
   }
   delay(1);
