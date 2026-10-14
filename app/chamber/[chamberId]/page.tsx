@@ -296,7 +296,6 @@ export default function Dashboard() {
         <ChartPanel
           chamberId={resolvedChamberId || rawChamberId || 'CH-01'}
           lastMeasuredAt={shown?.measuredAt ?? null}
-          isStale={liveFreshnessState === 'stale'}
           streamTick={streamTick}
         />
 
