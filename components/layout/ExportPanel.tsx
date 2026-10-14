@@ -46,7 +46,9 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
   const getRangeBounds = () => {
     const now = new Date();
     let durationMs = 60 * 60 * 1000; // 1h default
-    if (rangeParam === '15m') durationMs = 15 * 60 * 1000;
+    if (rangeParam === '30s') durationMs = 30 * 1000;
+    else if (rangeParam === '1m') durationMs = 60 * 1000;
+    else if (rangeParam === '15m') durationMs = 15 * 60 * 1000;
     else if (rangeParam === '6h') durationMs = 6 * 60 * 60 * 1000;
     else if (rangeParam === '24h') durationMs = 24 * 60 * 60 * 1000;
 

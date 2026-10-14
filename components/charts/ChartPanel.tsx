@@ -15,7 +15,7 @@ import {
 import { useAuth } from '../auth/AuthProvider';
 import type { StreamTick } from '../../hooks/useChamberStream';
 
-export type TimeRange = '15m' | '1h' | '6h' | '24h';
+export type TimeRange = '30s' | '1m' | '15m' | '1h' | '6h' | '24h';
 
 interface SensorChartPoint {
   time: string;
@@ -41,6 +41,8 @@ interface ChartPanelProps {
 }
 
 const RANGE_DURATIONS: Record<TimeRange, number> = {
+  '30s': 30 * 1000,
+  '1m': 60 * 1000,
   '15m': 15 * 60 * 1000,
   '1h': 60 * 60 * 1000,
   '6h': 6 * 60 * 60 * 1000,
@@ -155,7 +157,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
           const timeStr = d.toLocaleTimeString('id-ID', {
             hour: '2-digit',
             minute: '2-digit',
-            ...(activeRange === '15m' ? { second: '2-digit' } : {}),
+            ...(activeRange === '30s' || activeRange === '1m' || activeRange === '15m' ? { second: '2-digit' } : {}),
           });
 
           return {
@@ -215,7 +217,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
         time: d.toLocaleTimeString('id-ID', {
           hour: '2-digit',
           minute: '2-digit',
-          ...(activeRange === '15m' ? { second: '2-digit' } : {}),
+          ...(activeRange === '30s' || activeRange === '1m' || activeRange === '15m' ? { second: '2-digit' } : {}),
         }),
         rawTimestamp: streamTick.measuredAt,
         mq137: streamTick.values.mq137Raw.value,
@@ -254,7 +256,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
         <div className="flex items-center gap-3">
           {/* Time range buttons */}
           <div className="flex items-center p-1 rounded-xl bg-black/25 border border-white/10 backdrop-blur-md">
-            {(['15m', '1h', '6h', '24h'] as TimeRange[]).map((r) => (
+            {(['30s', '1m', '15m', '1h', '6h', '24h'] as TimeRange[]).map((r) => (
               <button
                 key={r}
                 onClick={() => handleRangeChange(r)}
@@ -359,6 +361,8 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
                 tickLine={false}
                 axisLine={false}
                 dy={5}
+                interval="preserveStartEnd"
+                minTickGap={activeRange === '30s' || activeRange === '1m' ? 30 : 5}
               />
               <YAxis
                 stroke="#ffffff60"

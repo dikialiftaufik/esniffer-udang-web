@@ -16,12 +16,19 @@ export default function Dashboard() {
   const params = useParams();
   const rawChamberId = params?.chamberId as string;
 
+  const mappedChamberId =
+    rawChamberId === '1' ? 'CH-01' : rawChamberId === '2' ? 'CH-02' : rawChamberId;
+
+  // Dorongan SSE 0,5 dtk (primer): tick yang lebih baru
+  // dari hasil polling langsung dipakai kartu + grafik.
+  // Polling REST 0,5 dtk saat SSE mati, melambat 5 dtk saat SSE live (status tetap segar).
+  const { tick: streamTick, status: streamStatus } = useChamberStream(mappedChamberId || null);
   const {
     data,
     requestState,
     isDegraded,
     resolvedChamberId,
-  } = useChamberLatest(rawChamberId);
+  } = useChamberLatest(rawChamberId, { paused: streamStatus === 'live' });
 
   // Extract first device status if available
   const deviceStatus = data?.devices?.[0] || null;
@@ -29,9 +36,6 @@ export default function Dashboard() {
   const connection = deviceStatus?.connection || null;
   const apiFresnhess = deviceStatus?.freshness || null;
 
-  // Dorongan SSE 0,5 dtk (pelengkap polling 5 dtk): tick yang lebih baru
-  // dari hasil polling langsung dipakai kartu + grafik.
-  const { tick: streamTick } = useChamberStream(resolvedChamberId || rawChamberId || null);
   const shown =
     streamTick && (!reading?.measuredAt || streamTick.measuredAt >= reading.measuredAt)
       ? {

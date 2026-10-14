@@ -61,6 +61,8 @@ interface UseChamberLatestOptions {
   initialIntervalMs?: number;
   maxIntervalMs?: number;
   timeoutMs?: number;
+  /** SSE live: polling REST melambat ke 5 dtk (status/freshness). Mati: 0,5 dtk. */
+  paused?: boolean;
 }
 
 export function useChamberLatest(
@@ -68,9 +70,10 @@ export function useChamberLatest(
   options: UseChamberLatestOptions = {}
 ) {
   const {
-    initialIntervalMs = 5000,
+    initialIntervalMs = 500,
     maxIntervalMs = 30000,
-    timeoutMs = 8000,
+    timeoutMs = 3500,
+    paused = false,
   } = options;
 
   const router = useRouter();
@@ -91,6 +94,10 @@ export function useChamberLatest(
   const activeReqIdRef = useRef(0);
   const lastFetchTimeRef = useRef<number>(0);
   const isPollingHaltedRef = useRef(false);
+  const pausedRef = useRef(paused);
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
 
   // Clear pending timers and active fetch
   const cleanup = useCallback(() => {
@@ -197,11 +204,12 @@ export function useChamberLatest(
       // Exponential backoff up to maxIntervalMs
       backoffRef.current = Math.min(backoffRef.current * 2, maxIntervalMs);
     } finally {
-      // Schedule next polling run if not halted
+      // Saat SSE live, polling melambat ke 5 dtk (status/freshness); saat SSE mati, 0,5 dtk.
       if (!isPollingHaltedRef.current && reqId === activeReqIdRef.current) {
         const isHidden = typeof document !== 'undefined' && document.hidden;
         // If tab is hidden, slow down polling to max interval (or 30s)
-        const nextDelay = isHidden ? Math.max(backoffRef.current, 30000) : backoffRef.current;
+        const baseDelay = pausedRef.current ? Math.max(backoffRef.current, 5000) : backoffRef.current;
+        const nextDelay = isHidden ? Math.max(baseDelay, 30000) : baseDelay;
 
         timerRef.current = setTimeout(() => {
           void fetchLatestRef.current(false);
@@ -221,9 +229,9 @@ export function useChamberLatest(
       if (document.hidden) {
         // Tab hidden: let the scheduled timer run or delay next execution
       } else {
-        // Tab active again: if stale (> 5s since last fetch), poll immediately
+        // Tab active again: if stale (> 1.5s since last fetch), poll immediately
         const elapsed = Date.now() - lastFetchTimeRef.current;
-        if (elapsed >= 5000 && !isPollingHaltedRef.current) {
+        if (elapsed >= 1500 && !isPollingHaltedRef.current) {
           void fetchLatestRef.current(false);
         }
       }
@@ -247,7 +255,7 @@ export function useChamberLatest(
     return () => {
       cleanup();
     };
-  }, [resolvedChamberId, initialIntervalMs, cleanup]);
+  }, [resolvedChamberId, initialIntervalMs, paused, cleanup]);
 
   return {
     data,

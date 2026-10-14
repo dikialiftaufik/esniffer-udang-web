@@ -25,8 +25,11 @@ export type StreamStatus = 'connecting' | 'live' | 'offline' | 'unsupported';
  * Langganan SSE /stream satu chamber. Mengembalikan tick terbaru
  * (null bila belum ada) + status koneksi.
  *
- * Polling lama (/latest tiap 5 dtk) tetap jalan sebagai cadangan: bila
- * status "offline"/"unsupported", halaman memakai data polling seperti biasa.
+ * Polling /latest 0,5 dtk saat SSE mati (fallback), melambat 5 dtk
+ * saat SSE live: bila status "offline"/"unsupported", halaman memakai
+ * data polling seperti biasa.
+ * Saat SSE "live", poller melambat (bukan berhenti) agar status koneksi
+ * alat tetap terpantau walau tidak ada tick baru.
  */
 export function useChamberStream(chamberCode: string | null) {
   const [tick, setTick] = useState<StreamTick | null>(null);
