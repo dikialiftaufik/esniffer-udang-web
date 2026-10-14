@@ -63,6 +63,14 @@ export function buildCsvRow(cells: unknown[]): string {
 }
 
 /**
+ * Penanda urutan byte UTF-8 di awal file. Excel Windows tidak mendeteksi
+ * UTF-8 tanpa BOM sehingga simbol seperti ° tampil rusak (Â°); satu-satunya
+ * cara yang didukung Excel agar CSV terbuka benar tanpa dialog impor.
+ * Isi data tidak berubah, hanya 3 byte pertama file (EF BB BF).
+ */
+export const CSV_UTF8_BOM = '\uFEFF';
+
+/**
  * Standard CSV headers for chamber readings export.
  */
 export const READING_CSV_HEADERS = [

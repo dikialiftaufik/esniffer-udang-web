@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { prisma, closeDb, allocateHistorySequence } from '../../lib/db/client.ts';
 import { GET as exportBatch } from '../../app/api/v1/batches/[batchId]/export/route.ts';
-import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS } from '../../lib/api/csv.ts';
+import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, CSV_UTF8_BOM } from '../../lib/api/csv.ts';
 import { hashPassword } from '../../lib/auth/password.ts';
 import { createSession as createAuthSession, buildSessionCookie } from '../../lib/auth/session.ts';
 
@@ -176,9 +176,13 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
     assert.match(res.headers.get('content-type') ?? '', /text\/csv/);
     assert.match(res.headers.get('content-disposition') ?? '', new RegExp(`dataset-${BATCH}\\.csv`));
 
+    const clone = res.clone();
     const lines = (await res.text()).split('\r\n').filter((l) => l.length > 0);
     assert.strictEqual(lines[0], DATASET_CSV_HEADERS.join(','));
     assert.strictEqual(lines.length, 4); // header + 3 row
+    // BOM diverifikasi di level byte (res.text() menghapus BOM sesuai standar Encoding)
+    const headBytes = new Uint8Array(await clone.arrayBuffer()).slice(0, 3);
+    assert.deepStrictEqual([...headBytes], [0xef, 0xbb, 0xbf]);
 
     const base = lines[1].split(',');
     assert.strictEqual(base[0], '2099-06-06T06:00:30.000Z');
@@ -241,7 +245,12 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
     const res = await getExport('?format=metadata');
     assert.strictEqual(res.status, 200);
     assert.match(res.headers.get('content-disposition') ?? '', /metadata-.*\.csv/);
-    const lines = (await res.text()).split('\r\n').filter((l) => l.length > 0);
+    const clone = res.clone();
+    const metaText = await res.text();
+    assert.ok(!metaText.startsWith(CSV_UTF8_BOM), 'BOM hanya di level byte, bukan teks terurai');
+    const headBytes = new Uint8Array(await clone.arrayBuffer()).slice(0, 3);
+    assert.deepStrictEqual([...headBytes], [0xef, 0xbb, 0xbf], 'Metadata wajib diawali BOM UTF-8');
+    const lines = metaText.split('\r\n').filter((l) => l.length > 0);
     assert.strictEqual(lines[0].split(',')[0], 'batch_id');
     assert.strictEqual(lines.length, 3); // header + SR (punya sesi) + SD (no_session)
 

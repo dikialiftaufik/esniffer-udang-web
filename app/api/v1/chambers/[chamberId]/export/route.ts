@@ -3,7 +3,7 @@ import { requireAuth } from '../../../../../../lib/auth/guard.ts';
 import { errorResponse, getRequestId } from '../../../../../../lib/api/response.ts';
 import { parseIsoDate, validateTimeRange } from '../../../../../../lib/api/validation.ts';
 import { notFound, payloadTooLarge, validationError } from '../../../../../../lib/api/errors.ts';
-import { READING_CSV_HEADERS, buildCsvRow } from '../../../../../../lib/api/csv.ts';
+import { READING_CSV_HEADERS, CSV_UTF8_BOM, buildCsvRow } from '../../../../../../lib/api/csv.ts';
 import { logger } from '../../../../../../lib/logging/logger.ts';
 import { Prisma } from '@prisma/client';
 
@@ -97,7 +97,7 @@ export async function GET(
 
         try {
           if (!headerSent) {
-            controller.enqueue(encoder.encode(buildCsvRow(READING_CSV_HEADERS)));
+            controller.enqueue(encoder.encode(CSV_UTF8_BOM + buildCsvRow(READING_CSV_HEADERS)));
             headerSent = true;
           }
 

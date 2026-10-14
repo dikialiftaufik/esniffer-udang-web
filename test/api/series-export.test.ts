@@ -267,9 +267,15 @@ describe('HTTP API v1: Time-Bucket Series & Safe CSV Export Tests', () => {
     assert.ok(disposition?.includes('attachment; filename='));
     assert.ok(disposition?.includes(chamberCode));
 
+    const clone = res.clone();
     const csvText = await res.text();
     const lines = csvText.trim().split('\r\n');
     assert.ok(lines.length >= 4, 'Header + 3 baris data');
+
+    // BOM UTF-8 di 3 byte pertama agar Excel Windows membaca ° dengan benar.
+    // (res.text() menghapus BOM sesuai standar Encoding, jadi cek level byte.)
+    const headBytes = new Uint8Array(await clone.arrayBuffer()).slice(0, 3);
+    assert.deepStrictEqual([...headBytes], [0xef, 0xbb, 0xbf], 'CSV wajib diawali BOM UTF-8');
 
     // Header baris pertama
     assert.ok(lines[0].includes('chamber_code,device_id,message_id,measured_at'));
