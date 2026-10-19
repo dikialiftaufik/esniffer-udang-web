@@ -107,8 +107,10 @@ export default function NewBatchPage() {
   const [initialTempC, setInitialTempC] = useState('');
   // Tahap A — pengadaan (termasuk cool box dan tiba, pindahan tahap B)
   const [arrivedAt, setArrivedAt] = useState(() => toLocalInput(new Date()));
-  const [coolerMin, setCoolerMin] = useState('');
-  const [coolerMax, setCoolerMax] = useState('');
+  // Butir 7: dua suhu cool box yang berbeda makna — saat di pasar (tercatat
+  // lama diDB sebagai cooler_temp_min_c) dan saat di lab (cooler_temp_max_c).
+  const [coolerMarket, setCoolerMarket] = useState('');
+  const [coolerLab, setCoolerLab] = useState('');
   const [deviationAck, setDeviationAck] = useState(false);
   // Foto kondisi awal (diunggah setelah batch dibuat)
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
@@ -157,8 +159,8 @@ export default function NewBatchPage() {
     setInitialTempC('8.5'); // udang baru dibeli, masih ada esnya
     // Tiba di lab (bagian pengadaan)
     setArrivedAt(`${wibDate}T07:55`);
-    setCoolerMin('1.2');
-    setCoolerMax('3.6');
+    setCoolerMarket('1.2');
+    setCoolerLab('3.6');
     // Tahap C — kelompok SR (suhu ruang) dan SD (dingin)
     setGroupSR({
       labTempC: '6.4',
@@ -277,17 +279,17 @@ export default function NewBatchPage() {
     } else if (t < -2 || t > 30) {
       e.initialTempC = 'Harus -2 sampai 30 °C.';
     }
-    const cmin = toNum(coolerMin);
-    if (cmin === null) {
-      e.coolerMin = 'Wajib diisi.';
-    } else if (cmin < 0 || cmin > 4) {
-      e.coolerMin = 'Harus 0–4 °C.';
+    const cmarket = toNum(coolerMarket);
+    if (cmarket === null) {
+      e.coolerMarket = 'Wajib diisi.';
+    } else if (cmarket < 0 || cmarket > 4) {
+      e.coolerMarket = 'Harus 0–4 °C.';
     }
-    const cmax = toNum(coolerMax);
-    if (cmax === null) {
-      e.coolerMax = 'Wajib diisi.';
-    } else if (cmax < 0 || cmax > 4) {
-      e.coolerMax = 'Harus 0–4 °C.';
+    const clab = toNum(coolerLab);
+    if (clab === null) {
+      e.coolerLab = 'Wajib diisi.';
+    } else if (clab < 0 || clab > 4) {
+      e.coolerLab = 'Harus 0–4 °C.';
     }
     return e;
   };
@@ -447,7 +449,7 @@ export default function NewBatchPage() {
       const stepOf = (k: string) =>
         ['procuredAt', 'marketSource', 'arrivedAt'].includes(k)
           ? 0
-          : ['shrimpCount', 'shrimpLengthCm', 'totalWeightG', 'initialTempC', 'coolerMin', 'coolerMax', 'photos'].includes(k)
+          : ['shrimpCount', 'shrimpLengthCm', 'totalWeightG', 'initialTempC', 'coolerMarket', 'coolerLab', 'photos'].includes(k)
             ? 1
             : 2;
       setStep(stepOf(Object.keys(errs)[0]));
@@ -467,8 +469,8 @@ export default function NewBatchPage() {
         initialCondition,
         initialTempC: Number(initialTempC),
         arrivedAtUtc: new Date(arrivedAt).toISOString(),
-        coolerTempMinC: Number(coolerMin),
-        coolerTempMaxC: Number(coolerMax),
+        coolerTempMinC: Number(coolerMarket),
+        coolerTempMaxC: Number(coolerLab),
         deviationAcknowledged: deviationAck,
       });
       const toGroup = (g: GroupForm, storageCondition: string) => ({
@@ -998,16 +1000,16 @@ export default function NewBatchPage() {
             }, { placeholder: '8.2…', hint: 'Ukur dengan termometer tusuk saat udang tiba.' })}
           </div>
           <div className="grid grid-cols-2 gap-3">
-            {numberField('coolerMin', 'Suhu cool box min (°C)', coolerMin, (v) => {
-              setCoolerMin(v);
-              revalidateLive(1, { coolerMin: fieldErrors.coolerMin });
-            }, { placeholder: '1.2…' })}
-            {numberField('coolerMax', 'Suhu cool box max (°C)', coolerMax, (v) => {
-              setCoolerMax(v);
-              revalidateLive(1, { coolerMax: fieldErrors.coolerMax });
-            }, { placeholder: '3.8…' })}
+            {numberField('coolerMarket', 'Suhu cool box saat di pasar (°C)', coolerMarket, (v) => {
+              setCoolerMarket(v);
+              revalidateLive(1, { coolerMarket: fieldErrors.coolerMarket });
+            }, { placeholder: '1.2…', hint: 'Pasang termometer di es lalu catat saat membeli.' })}
+            {numberField('coolerLab', 'Suhu cool box saat di lab (°C)', coolerLab, (v) => {
+              setCoolerLab(v);
+              revalidateLive(1, { coolerLab: fieldErrors.coolerLab });
+            }, { placeholder: '3.8…', hint: 'Catat lagi saat tiba di lab, sebelum observasi.' })}
           </div>
-          <p className={hintCls}>Jaga 0–4 °C dengan rasio es:udang 2:1.</p>
+          <p className={hintCls}>Cool box dijaga 0–4 °C dengan rasio es:udang 2:1 di kedua titik ukur.</p>
           <div className={fieldCls}>
             <label className={labelCls} htmlFor="photos">
               Foto kondisi awal

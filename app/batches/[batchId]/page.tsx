@@ -549,11 +549,11 @@ export default function BatchDetailPage() {
             <DataPair label="Ukuran (ekor/kg)" value={num(batch.sizeGrade)} />
             <DataPair label="Suhu awal udang (°C)" value={num(batch.initialTempC, ' °C')} />
             <DataPair
-              label="Suhu cool box min–max (°C)"
+              label="Suhu cool box pasar → lab (°C)"
               value={
                 batch.coolerTempMinC === null && batch.coolerTempMaxC === null
                   ? EM_DASH
-                  : `${num(batch.coolerTempMinC)} – ${num(batch.coolerTempMaxC, ' °C')}`
+                  : `${num(batch.coolerTempMinC)} → ${num(batch.coolerTempMaxC, ' °C')}`
               }
             />
           </dl>
