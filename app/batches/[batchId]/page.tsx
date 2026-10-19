@@ -896,7 +896,7 @@ export default function BatchDetailPage() {
               </details>
             )}
             {g.sessions.length === 0 && (
-              <p className="text-xs font-mono text-white/50">Belum ada sesi pengukuran. Pilih timepoint di bawah lalu mulai sesi pertama.</p>
+              <p className="text-xs font-mono text-white/50">Belum ada sesi observasi. Pilih timepoint di bawah lalu mulai sesi pertama.</p>
             )}
             {isAdmin && !locked && available.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 pt-1">
