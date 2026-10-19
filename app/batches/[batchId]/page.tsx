@@ -150,6 +150,18 @@ export default function BatchDetailPage() {
     labWeightAfterG: string;
   } | null>(null);
   const [savingGroup, setSavingGroup] = useState(false);
+  // Modal form pra-sesi: input suhu berat foto sebelum start sesi.
+  const [preSessionModal, setPreSessionModal] = useState<{
+    groupId: string;
+    timepointCode: string;
+    labTempC: string;
+    labWeightAfterG: string;
+    photos: File[];
+    photoPreviews: string[];
+    photoCaptions: string[];
+    err: string | null;
+    busy: boolean;
+  } | null>(null);
   const { message: notice, notify, dismiss } = useSuccessNotice();
 
   useEffect(() => {
@@ -252,21 +264,78 @@ export default function BatchDetailPage() {
       setError('Nyalakan sensor 30 menit dulu (centang warmup) sebelum Start sesi');
       return;
     }
-    setBusy(true);
-    setError(null);
+    // Modal form pra-sesi: isi suhu/berat/foto dulu, sesi dibuat setelah submit.
+    setPreSessionModal({
+      groupId: g.groupId,
+      timepointCode,
+      labTempC: '',
+      labWeightAfterG: '',
+      photos: [],
+      photoPreviews: [],
+      photoCaptions: [],
+      err: null,
+      busy: false,
+    });
+  };
+
+  // Handler submit modal pra-sesi: simpan data grup + foto, lalu buat sesi.
+  const handlePreSessionSubmit = async () => {
+    if (!preSessionModal) return;
+    const { groupId, timepointCode, labTempC, labWeightAfterG, photos, photoCaptions } = preSessionModal;
+    const fail = (msg: string) =>
+      setPreSessionModal((m) => (m ? { ...m, err: msg, busy: false } : null));
+    const tempOk = labTempC.trim() === '' || Number.isFinite(Number(labTempC));
+    const weightOk = labWeightAfterG.trim() === '' || Number.isFinite(Number(labWeightAfterG));
+    if (!tempOk || !weightOk) {
+      fail('Suhu dan berat harus angka yang sah (atau dikosongkan).');
+      return;
+    }
+    if (photos.length > 0) {
+      const badCaption = photoCaptions.findIndex((c) => c.trim() === '' || c.trim().length > MAX_PHOTO_CAPTION_LENGTH);
+      if (badCaption >= 0) {
+        fail(`Caption foto ke-${badCaption + 1} wajib diisi (maks ${MAX_PHOTO_CAPTION_LENGTH} karakter).`);
+        return;
+      }
+    }
+    setPreSessionModal((m) => (m ? { ...m, busy: true, err: null } : null));
     try {
-      await callJson(`/api/v1/groups/${encodeURIComponent(g.groupId)}/sessions`, {
+      // 1. Simpan suhu/berat ke grup (PATCH, bukan POST).
+      if (labTempC.trim() !== '' || labWeightAfterG.trim() !== '') {
+        const payload: Record<string, unknown> = {};
+        if (labTempC.trim() !== '') payload.labTempC = Number(labTempC);
+        if (labWeightAfterG.trim() !== '') payload.labWeightAfterG = Number(labWeightAfterG);
+        const res = await apiFetch(`/api/v1/groups/${encodeURIComponent(groupId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error?.message || `Gagal menyimpan data grup (kode ${res.status}).`);
+      }
+      // 2. Upload foto dokumentasi terpasang ke grup ini (caption wajib).
+      if (photos.length > 0) {
+        const form = new FormData();
+        for (const f of photos) form.append('photos', f);
+        form.append('captions', JSON.stringify(photoCaptions));
+        form.append('groupId', groupId);
+        const res = await apiFetch(`/api/v1/batches/${encodeURIComponent(batchId)}/photos`, {
+          method: 'POST',
+          body: form,
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error?.message || `Gagal mengunggah foto (kode ${res.status}).`);
+      }
+      // 3. Baru saat ini sesi dibuat.
+      await callJson(`/api/v1/groups/${encodeURIComponent(groupId)}/sessions`, {
         timepointCode,
         warmupDone: true,
-        // Butir 4: device tak lagi dipilih manual — sesuai chamber yang dipilih.
-        chamberId: chSel[g.groupId] || null,
+        chamberId: chSel[groupId] || null,
       });
+      setPreSessionModal(null);
       notify(`Sesi ${timepointCode} berhasil dimulai.`);
       refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal membuat sesi');
-    } finally {
-      setBusy(false);
+      setPreSessionModal((m) => (m ? { ...m, err: err instanceof Error ? err.message : 'Gagal memulai sesi', busy: false } : null));
     }
   };
 
@@ -950,6 +1019,165 @@ export default function BatchDetailPage() {
           </div>
         );
       })}
+      {/* Modal form pra-sesi: wajib diisi sebelum sesi dibuat. */}
+      {preSessionModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60"
+          onClick={() => setPreSessionModal(null)}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pre-session-title"
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: 'linear-gradient(180deg, #24407f 0%, #16295c 100%)' }}
+            className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-white/15 p-5 space-y-4"
+          >
+            <h3 id="pre-session-title" className="text-base font-mono font-bold text-white">
+              Observasi Pra-Sesi — {preSessionModal.timepointCode}
+            </h3>
+            <p className="text-[13px] font-mono text-white/75 leading-relaxed">
+              Isi data observasi dulu, lalu sesi baru dimulai kembali.
+            </p>
+            {preSessionModal.err && (
+              <p role="alert" className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs font-mono">
+                {preSessionModal.err}
+              </p>
+            )}
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="pre-temp" className="block text-[12px] font-mono text-white/75 mb-1">
+                  Suhu udang sebelum observasi (°C)
+                </label>
+                <input
+                  id="pre-temp"
+                  type="number"
+                  step="0.1"
+                  lang="en"
+                  aria-label="Suhu udang sebelum observasi dalam derajat Celsius, titik desimal pakai titik"
+                  value={preSessionModal.labTempC}
+                  onChange={(e) =>
+                    setPreSessionModal((m) => (m ? { ...m, labTempC: e.target.value } : null))}
+                  placeholder="Contoh: 28.5"
+                  className="w-full px-3 py-2.5 rounded-xl bg-black/25 border border-white/10 text-white text-sm font-mono placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
+                />
+                <p className="text-[11px] font-mono text-white/45 mt-1">
+                  Angka desimal menggunakan titik, mis. 28.5
+                </p>
+              </div>
+              <div>
+                <label htmlFor="pre-weight" className="block text-[12px] font-mono text-white/75 mb-1">
+                  Berat sampel sesudah observasi (g)
+                </label>
+                <input
+                  id="pre-weight"
+                  type="number"
+                  step="0.1"
+                  aria-label="Berat sampel sesudah observasi dalam gram, titik desimal pakai titik"
+                  value={preSessionModal.labWeightAfterG}
+                  onChange={(e) =>
+                    setPreSessionModal((m) => (m ? { ...m, labWeightAfterG: e.target.value } : null))}
+                  placeholder="Contoh: 478.5"
+                  className="w-full px-3 py-2.5 rounded-xl bg-black/25 border border-white/10 text-white text-sm font-mono placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
+                />
+                <p className="text-[11px] font-mono text-white/45 mt-1">
+                  Angka desimal menggunakan titik, mis. 478.5
+                </p>
+              </div>
+              <div>
+                <label htmlFor="pre-photo" className="block text-[12px] font-mono text-white/75 mb-1">
+                  Foto dokumentasi (opsional)
+                </label>
+                <input
+                  id="pre-photo"
+                  type="file"
+                  accept="image/jpeg,image/png"
+                  capture="environment"
+                  multiple
+                  onChange={(e) => {
+                    const incoming = Array.from(e.target.files ?? []);
+                    const usable = incoming.filter(
+                      (f) => /image\/(jpeg|png)/.test(f.type) && f.size > 0 && f.size <= MAX_PHOTO_BYTES
+                    );
+                    if (usable.length !== incoming.length) {
+                      setPreSessionModal((m) => (m ? {
+                        ...m,
+                        err: 'Beberapa file dilewati: wajib jpg/png maks 5MB.',
+                      } : null));
+                    }
+                    setPreSessionModal((m) => (m ? {
+                      ...m,
+                      photos: usable,
+                      photoPreviews: usable.map((f) => URL.createObjectURL(f)),
+                      photoCaptions: usable.map(() => ''),
+                      err: null,
+                    } : null));
+                  }}
+                  className="w-full text-xs font-mono text-white/60 file:mr-2 file:px-3 file:py-1.5 file:rounded-lg file:bg-white/10 file:border file:border-white/10 file:text-white/80 file:text-xs file:font-mono"
+                />
+                {preSessionModal.photoPreviews.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    {preSessionModal.photoPreviews.map((src, i) => (
+                      <div key={src} className="relative space-y-1">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={src}
+                          alt={`Pratinjau foto ${i + 1}`}
+                          className="w-full h-20 object-cover rounded-lg border border-white/10"
+                        />
+                        <input
+                          type="text"
+                          maxLength={MAX_PHOTO_CAPTION_LENGTH}
+                          autoComplete="off"
+                          value={preSessionModal.photoCaptions[i] ?? ''}
+                          onChange={(e) =>
+                            setPreSessionModal((m) => (m ? {
+                              ...m,
+                              photoCaptions: m.photoCaptions.map((c, j) => (j === i ? e.target.value : c)),
+                            } : null))}
+                          placeholder="Caption wajib"
+                          className="w-full text-[11px] font-mono px-2 py-1 rounded-lg bg-black/25 border border-white/10 text-white/80 placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPreSessionModal((m) => (m ? {
+                              ...m,
+                              photos: m.photos.filter((_, j) => j !== i),
+                              photoPreviews: m.photoPreviews.filter((_, j) => j !== i),
+                              photoCaptions: m.photoCaptions.filter((_, j) => j !== i),
+                            } : null))}
+                          aria-label={`Hapus foto ${i + 1} dari pilihan`}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-rose-500/90 text-white text-[10px] font-bold leading-none hover:bg-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPreSessionModal(null)}
+                disabled={preSessionModal.busy}
+                className="flex-1 py-2.5 rounded-xl bg-transparent hover:bg-white/10 border border-white/15 text-white/80 text-sm font-mono font-bold transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+              >
+                Batal
+              </button>
+              <button
+                onClick={() => void handlePreSessionSubmit()}
+                disabled={preSessionModal.busy}
+                className="flex-1 py-2.5 rounded-xl bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-400/50 text-emerald-100 text-sm font-mono font-bold transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
+              >
+                {preSessionModal.busy ? 'Memproses…' : 'Mulai Sesi'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
