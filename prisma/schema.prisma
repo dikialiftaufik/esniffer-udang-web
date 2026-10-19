@@ -253,8 +253,12 @@ model CollectionBatch {
   initialCondition  InitialCondition     @map("initial_condition")
   initialTempC      Decimal              @map("initial_temp_c") @db.Decimal(5, 2)
   arrivedAtUtc      DateTime             @map("arrived_at_utc") @db.Timestamptz(3)
-  coolerTempMinC    Decimal              @map("cooler_temp_min_c") @db.Decimal(5, 2)
-  coolerTempMaxC    Decimal              @map("cooler_temp_max_c") @db.Decimal(5, 2)
+  // Revisi putaran 2 butir 7: kolom di-rename jadi market/lab (dua titik
+  // pengukuran di pasar dan di lab). Nama field Prisma/Tetap sengaja belum
+  // berubah agar kontrak API & UI tetap stabil; pemetaan nama field ke
+  // label baru dikerjakan di fase lib/UI.
+  coolerTempMinC    Decimal              @map("cooler_temp_market_c") @db.Decimal(5, 2)
+  coolerTempMaxC    Decimal              @map("cooler_temp_lab_c") @db.Decimal(5, 2)
   iceToShrimpRatio  String               @default("2:1") @map("ice_to_shrimp_ratio") @db.VarChar(8)
   rejectionNotes    String?              @map("rejection_notes") @db.VarChar(500)
   operatorId        String               @map("operator_id") @db.Uuid
