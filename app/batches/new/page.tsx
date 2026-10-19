@@ -35,7 +35,7 @@ const inputErrCls =
   'w-full px-3 py-2.5 rounded-xl bg-black/25 border border-rose-400/60 text-sm font-mono text-white placeholder:text-white/30 focus:outline-none focus:border-rose-300 focus-visible:ring-2 focus-visible:ring-rose-300/50 [color-scheme:dark] [tabular-nums]';
 const cardCls = 'flex flex-col gap-5 p-5 md:p-6 rounded-2xl bg-white/10 backdrop-blur-lg border border-white/20';
 const btnPrimary =
-  'w-full py-3 rounded-xl bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-400/40 text-emerald-100 text-sm font-mono font-bold tracking-wide transition-colors touch-manipulation disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70';
+  'w-full py-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-sm font-mono font-bold tracking-wide transition-all disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70';
 const btnBack =
   'flex-1 py-3 rounded-xl bg-transparent hover:bg-white/10 border border-white/15 text-white/70 text-sm font-mono font-bold transition-colors touch-manipulation disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40';
 const stepBtn =
