@@ -71,6 +71,23 @@ export function buildCsvRow(cells: unknown[]): string {
 export const CSV_UTF8_BOM = '\uFEFF';
 
 /**
+ * Konversi UTC → WIB (Asia/Jakarta, UTC+7 konstan tanpa DST sejak 1988)
+ * untuk memecah timestamp menjadi kolom tanggal dan kolom jam terpisah
+ * pada CSV metadata (revisi putaran 2 butir 5). Sumber nilai tetap kolom
+ * UTC di database; konversi hanya terjadi di pembuat CSV.
+ */
+const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+export function toWibParts(value: Date): { date: string; time: string } {
+  const shifted = new Date(value.getTime() + WIB_OFFSET_MS);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return {
+    date: `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`,
+    time: `${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}:${pad(shifted.getUTCSeconds())}`,
+  };
+}
+
+/**
  * Standard CSV headers for chamber readings export.
  */
 export const READING_CSV_HEADERS = [
@@ -126,7 +143,10 @@ export const DATASET_CSV_HEADERS = [
  */
 export const DATASET_METADATA_CSV_HEADERS = [
   'batch_id',
-  'procured_at_utc',
+  // Revisi putaran 2 butir 5: timestamp beli/tiba dipecah menjadi kolom
+  // tanggal dan kolom jam WIB terpisah (konversi di pembuat CSV).
+  'procured_date',
+  'procured_time_wib',
   'market_source',
   'source_type',
   'shrimp_count',
@@ -135,9 +155,11 @@ export const DATASET_METADATA_CSV_HEADERS = [
   'total_weight_g',
   'initial_condition',
   'initial_temp_c',
-  'arrived_at_utc',
-  'cooler_temp_min_c',
-  'cooler_temp_max_c',
+  'arrived_date',
+  'arrived_time_wib',
+  // Revisi putaran 2 butir 7: min/max menjadi dua titik pengukuran.
+  'cooler_temp_market_c',
+  'cooler_temp_lab_c',
   'ice_to_shrimp_ratio',
   'rejection_notes',
   'photo_count',
