@@ -73,6 +73,25 @@ export function parseVisualCheck(val: unknown): 'NORMAL' | 'MELANOSIS' | 'DAMAGE
   throw validationError('Field "visualCheck" harus normal, melanosis, damaged, atau mixed_species');
 }
 
+/**
+ * Mode penyimpanan grup dingin (revisi putaran 2 butir 1). Kontrak API
+ * memakai lowercase chamber/plain_fridge, mengikuti pola storageCondition.
+ */
+export type ApiColdStorageMode = 'chamber' | 'plain_fridge';
+
+const COLD_MODE_TO_DB = { chamber: 'CHAMBER', plain_fridge: 'PLAIN_FRIDGE' } as const;
+const DB_TO_COLD_MODE: Record<string, ApiColdStorageMode> = {
+  CHAMBER: 'chamber',
+  PLAIN_FRIDGE: 'plain_fridge',
+};
+
+export function parseColdStorageMode(val: unknown): 'CHAMBER' | 'PLAIN_FRIDGE' {
+  if (val === 'chamber' || val === 'plain_fridge') {
+    return COLD_MODE_TO_DB[val];
+  }
+  throw validationError('Field "coldStorageMode" harus chamber atau plain_fridge');
+}
+
 export function parseStorageCondition(val: unknown): {
   api: StorageConditionCode;
   db: 'ROOM_TEMP' | 'COLD';
@@ -181,6 +200,7 @@ type DbGroup = {
   batchId: string;
   chamberId: string | null;
   storageCondition: string;
+  coldStorageMode: string;
   targetTempC: { toNumber(): number };
   labTempC: { toNumber(): number };
   visualCheck: string;
@@ -197,6 +217,7 @@ export function serializeGroup(g: DbGroup) {
     batchId: g.batchId,
     chamberId: g.chamberId,
     storageCondition: DB_TO_STORAGE[g.storageCondition] ?? g.storageCondition,
+    coldStorageMode: DB_TO_COLD_MODE[g.coldStorageMode] ?? g.coldStorageMode,
     targetTempC: dec(g.targetTempC),
     labTempC: dec(g.labTempC),
     visualCheck: DB_TO_VISUAL[g.visualCheck] ?? g.visualCheck,

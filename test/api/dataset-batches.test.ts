@@ -8,6 +8,7 @@ import { POST as createGroups } from '../../app/api/v1/batches/[batchId]/groups/
 import { POST as lockBatch } from '../../app/api/v1/batches/[batchId]/lock/route.ts';
 import { POST as uploadPhotos } from '../../app/api/v1/batches/[batchId]/photos/route.ts';
 import { POST as createSession } from '../../app/api/v1/groups/[groupId]/sessions/route.ts';
+import { PATCH as patchGroup } from '../../app/api/v1/groups/[groupId]/route.ts';
 import { POST as completeSession } from '../../app/api/v1/sessions/[sessionId]/complete/route.ts';
 import { hashPassword } from '../../lib/auth/password.ts';
 import { createSession as createAuthSession, buildSessionCookie } from '../../lib/auth/session.ts';
@@ -474,6 +475,109 @@ describe('HTTP API v1: Dataset Batches, Groups, Sessions & Lock (Fase 3)', () =>
       { params: Promise.resolve({ sessionId: sessionH0 }) }
     );
     assert.strictEqual(again.status, 409);
+  });
+
+  it('12b. PATCH groups mengubah data grup; input invalid/kosong/room ditolak (butir 3)', async () => {
+    const patch = (body: unknown, groupId = groupSr) =>
+      patchGroup(
+        new Request(`http://localhost:3000/api/v1/groups/${groupId}`, {
+          method: 'PATCH',
+          headers: postHeaders(adminCookie),
+          body: JSON.stringify(body),
+        }),
+        { params: Promise.resolve({ groupId }) }
+      );
+
+    const res = await patch({ labTempC: 7.7 });
+    assert.strictEqual(res.status, 200);
+    const data = (await res.json()).data;
+    assert.strictEqual(data.labTempC, 7.7);
+    assert.strictEqual(data.coldStorageMode, 'chamber');
+
+    // Grup dingin: ganti mode dua arah, plain_fridge ↔ chamber (tanpa chamber).
+    const toFridge = await patch({ coldStorageMode: 'plain_fridge' }, `${batchId}-SD`);
+    assert.strictEqual(toFridge.status, 200);
+    assert.strictEqual((await toFridge.json()).data.coldStorageMode, 'plain_fridge');
+    const back = await patch({ coldStorageMode: 'chamber' }, `${batchId}-SD`);
+    assert.strictEqual(back.status, 200);
+
+    assert.strictEqual((await patch({})).status, 422); // tanpa field yang dikenal
+    assert.strictEqual((await patch({ labTempC: 99 })).status, 422);
+    assert.strictEqual((await patch({ coldStorageMode: 'plain_fridge' }, `${batchId}-SR`)).status, 422);
+    assert.strictEqual((await patch({ labTempC: 7.7 }, 'BT-XXXX-XX')).status, 404);
+  });
+
+  it('12c. POST groups menerima coldStorageMode plain_fridge untuk grup cold (butir 1)', async () => {
+    const batchRes = await createBatch(
+      new Request('http://localhost:3000/api/v1/batches', {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify(batchBody()),
+      })
+    );
+    assert.strictEqual(batchRes.status, 201);
+    const newBatch = (await batchRes.json()).data.batchId;
+
+    const res = await createGroups(
+      new Request(`http://localhost:3000/api/v1/batches/${newBatch}/groups`, {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify({
+          groups: [{ ...groupsBody().groups[1], coldStorageMode: 'plain_fridge' }],
+        }),
+      }),
+      { params: Promise.resolve({ batchId: newBatch }) }
+    );
+    assert.strictEqual(res.status, 201);
+    const data = (await res.json()).data;
+    assert.strictEqual(data[0].storageCondition, 'cold');
+    assert.strictEqual(data[0].coldStorageMode, 'plain_fridge');
+
+    // Mode plain_fridge pada grup ruang tidak bermakna → ditolak.
+    const bad = await createGroups(
+      new Request(`http://localhost:3000/api/v1/batches/${newBatch}/groups`, {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify({
+          groups: [{ ...groupsBody().groups[0], coldStorageMode: 'plain_fridge' }],
+        }),
+      }),
+      { params: Promise.resolve({ batchId: newBatch }) }
+    );
+    assert.strictEqual(bad.status, 422);
+  });
+
+  it('12d. sesi grup cold+chamber tanpa chamber ditolak, dengan chamber sah (butir 1)', async () => {
+    const base = { timepointCode: 'H0', warmupDone: true };
+
+    const without = await createSession(
+      new Request(`http://localhost:3000/api/v1/groups/${batchId}-SD/sessions`, {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify(base),
+      }),
+      { params: Promise.resolve({ groupId: `${batchId}-SD` }) }
+    );
+    assert.strictEqual(without.status, 422); // uji penerimaan butir 1
+
+    const chamber = await prisma.chamber.create({
+      data: { code: `SB-12D-${Date.now()}`, name: 'Kamar uji sesi chamber' },
+    });
+    try {
+      const res = await createSession(
+        new Request(`http://localhost:3000/api/v1/groups/${batchId}-SD/sessions`, {
+          method: 'POST',
+          headers: postHeaders(adminCookie),
+          body: JSON.stringify({ ...base, chamberId: chamber.id }),
+        }),
+        { params: Promise.resolve({ groupId: `${batchId}-SD` }) }
+      );
+      assert.strictEqual(res.status, 201);
+      const sessionId = (await res.json()).data.sessionId;
+      await prisma.measurementSession.delete({ where: { sessionId } });
+    } finally {
+      await prisma.chamber.delete({ where: { id: chamber.id } });
+    }
   });
 
   it('13. POST batches/:id/lock menolak saat sesi OPEN, mengunci setelah complete', async () => {

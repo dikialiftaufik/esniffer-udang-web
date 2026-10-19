@@ -1,0 +1,78 @@
+import { prisma } from '../../../../../lib/db/client.ts';
+import { requireAuth, verifyCsrfAndOrigin } from '../../../../../lib/auth/guard.ts';
+import { jsonResponse, errorResponse, getRequestId } from '../../../../../lib/api/response.ts';
+import { conflict, notFound, validationError } from '../../../../../lib/api/errors.ts';
+import {
+  serializeGroup,
+  parseBoundedNumber,
+  parsePositiveNumber,
+  parseColdStorageMode,
+} from '../../../../../lib/api/dataset.ts';
+import { Prisma } from '@prisma/client';
+
+/**
+ * Edit parsial satu grup (revisi putaran 2 butir 3): field yang sama dengan
+ * step pengelompokan wizard. Batch terkunci ditolak 409. Validasi memakai
+ * parser lib yang sama dengan pembuatan grup, bukan salinan aturan.
+ */
+export async function PATCH(
+  request: Request,
+  context: { params: Promise<{ groupId: string }> }
+): Promise<Response> {
+  const requestId = getRequestId(request);
+
+  try {
+    verifyCsrfAndOrigin(request);
+    await requireAuth(request, ['ADMIN']);
+    const { groupId } = await context.params;
+
+    const group = await prisma.sampleGroup.findUnique({
+      where: { groupId },
+      include: { batch: true },
+    });
+    if (!group) {
+      throw notFound(`Group "${groupId}" not found`);
+    }
+    if (group.batch.lockedAt) {
+      throw conflict(`Batch "${group.batchId}" sudah terkunci dan tidak bisa diubah`);
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const data: Prisma.SampleGroupUpdateInput = {};
+
+    if (body?.labTempC !== undefined) {
+      data.labTempC = parseBoundedNumber(body.labTempC, 'labTempC', -2, 30);
+    }
+    if (body?.labWeightBeforeG !== undefined) {
+      data.labWeightBeforeG = parsePositiveNumber(body.labWeightBeforeG, 'labWeightBeforeG', 2000);
+    }
+    if (body?.labWeightAfterG !== undefined) {
+      data.labWeightAfterG = parsePositiveNumber(body.labWeightAfterG, 'labWeightAfterG', 2000);
+    }
+    if (body?.coldStorageMode !== undefined) {
+      const mode = parseColdStorageMode(body.coldStorageMode);
+      if (mode === 'PLAIN_FRIDGE' && group.storageCondition !== 'COLD') {
+        throw validationError('Field "coldStorageMode" plain_fridge hanya untuk kondisi cold');
+      }
+      // Konsistensi mode dengan penugasan chamber; aturan terakhir dijaga
+      // juga oleh CHECK DB sample_groups_plain_fridge_no_chamber.
+      if (mode === 'PLAIN_FRIDGE' && group.chamberId !== null) {
+        throw validationError(
+          'Grup plain_fridge harus tanpa chamber; lepaskan penugasan chamber dulu'
+        );
+      }
+      data.coldStorageMode = mode;
+    }
+
+    if (Object.keys(data).length === 0) {
+      throw validationError(
+        'Body harus memuat minimal satu field: labTempC, labWeightBeforeG, labWeightAfterG, atau coldStorageMode'
+      );
+    }
+
+    const updated = await prisma.sampleGroup.update({ where: { groupId }, data });
+    return jsonResponse(serializeGroup(updated));
+  } catch (err) {
+    return errorResponse(err, requestId, request);
+  }
+}
