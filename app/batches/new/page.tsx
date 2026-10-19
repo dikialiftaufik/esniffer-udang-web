@@ -48,6 +48,8 @@ interface GroupForm {
   labWeightBeforeG: string;
   labWeightAfterG: string;
   sampleShrimpCount: string;
+  /** Butir 1: hanya berarti bagi grup dingin; grup ruang selalu chamber (tanpa chamber aktif). */
+  coldStorageMode: 'chamber' | 'plain_fridge';
 }
 
 const emptyGroup = (): GroupForm => ({
@@ -56,6 +58,7 @@ const emptyGroup = (): GroupForm => ({
   labWeightBeforeG: '',
   labWeightAfterG: '',
   sampleShrimpCount: '4',
+  coldStorageMode: 'chamber',
 });
 
 const durationFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
@@ -168,6 +171,7 @@ export default function NewBatchPage() {
       labWeightBeforeG: '472',
       labWeightAfterG: '468.5',
       sampleShrimpCount: '4',
+      coldStorageMode: 'chamber',
     });
     setGroupSD({
       labTempC: '6.4',
@@ -175,6 +179,7 @@ export default function NewBatchPage() {
       labWeightBeforeG: '472',
       labWeightAfterG: '469.2',
       sampleShrimpCount: '4',
+      coldStorageMode: 'chamber',
     });
     setFieldErrors({});
     notify('Form terisi data tes — periksa dulu sebelum Simpan batch.');
@@ -473,13 +478,16 @@ export default function NewBatchPage() {
         coolerTempMaxC: Number(coolerLab),
         deviationAcknowledged: deviationAck,
       });
-      const toGroup = (g: GroupForm, storageCondition: string) => ({
+      const toGroup = (g: GroupForm, storageCondition: 'room_temp' | 'cold') => ({
         storageCondition,
         labTempC: Number(g.labTempC),
         visualCheck: g.visualCheck,
         labWeightBeforeG: Number(g.labWeightBeforeG),
         labWeightAfterG: Number(g.labWeightAfterG),
         sampleShrimpCount: Number(g.sampleShrimpCount),
+        // Butir 1: mode simpan hanya relevan untuk grup dingin; API default
+        // chamber bila field tak dikirim (grup ruang).
+        ...(storageCondition === 'cold' ? { coldStorageMode: g.coldStorageMode } : {}),
       });
       await postJson(`/api/v1/batches/${encodeURIComponent(batch.batchId)}/groups`, {
         groups: [toGroup(groupSR, 'room_temp'), toGroup(groupSD, 'cold')],
@@ -605,6 +613,23 @@ export default function NewBatchPage() {
           {title}
         </h3>
         <p className={hintCls}>{hint}</p>
+        {prefix === 'sd' && (
+          <div className={fieldCls}>
+            <span className={labelCls}>
+              Tempat penyimpanan sesi dingin
+              {reqMark}
+            </span>
+            {radioRow('sd-cold-mode', g.coldStorageMode, (v) =>
+              set({ coldStorageMode: v as GroupForm['coldStorageMode'] }), [
+              ['chamber', 'Dalam chamber (sensor chamber)'],
+              ['plain_fridge', 'Langsung di kulkas, tanpa chamber'],
+            ])}
+            <p className={hintCls}>
+              Pilih chamber bila udang dan sensor berada bersama di chamber; pilih kulkas bila udang hanya
+              disimpan di kulkas biasa.
+            </p>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-labTempC`}>
@@ -1088,7 +1113,7 @@ export default function NewBatchPage() {
             'sd',
             'group-title-sd',
             'Suhu Dingin (4 ± 1 °C)',
-            'Diukur tiap 24 jam selama 10–14 hari.',
+            'Diukur tiap 24 jam selama 10–14 hari, sesuai tempat penyimpanan yang dipilih.',
             groupSD,
             setSD
           )}

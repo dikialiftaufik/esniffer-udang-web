@@ -20,6 +20,7 @@ interface SessionItem {
 interface GroupItem {
   groupId: string;
   storageCondition: string;
+  coldStorageMode: string;
   targetTempC: number | null;
   labTempC: number | null;
   visualCheck: string;
@@ -572,7 +573,10 @@ export default function BatchDetailPage() {
                 }`}
               >
                 <p className="text-xs font-mono font-bold text-white">
-                  {g.groupId} • {g.storageCondition === 'cold' ? 'Suhu Dingin (4 ± 1 °C)' : 'Suhu Ruang (25 ± 2 °C)'}
+                  {g.groupId} •{' '}
+                  {g.storageCondition === 'cold'
+                    ? `Suhu Dingin, ${g.coldStorageMode === 'plain_fridge' ? 'langsung di kulkas' : 'chamber'} (4 ± 1 °C)`
+                    : 'Suhu Ruang (25 ± 2 °C)'}
                 </p>
                 <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3 mt-1.5">
                   <DataPair label="Suhu udang sebelum observasi (°C)" value={num(g.labTempC, ' °C')} />
