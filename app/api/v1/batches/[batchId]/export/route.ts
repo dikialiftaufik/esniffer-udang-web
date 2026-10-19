@@ -2,14 +2,14 @@ import { prisma } from '../../../../../../lib/db/client.ts';
 import { requireAuth } from '../../../../../../lib/auth/guard.ts';
 import { errorResponse, getRequestId } from '../../../../../../lib/api/response.ts';
 import { notFound, payloadTooLarge, validationError } from '../../../../../../lib/api/errors.ts';
-import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, CSV_UTF8_BOM, buildCsvRow } from '../../../../../../lib/api/csv.ts';
+import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, CSV_UTF8_BOM, buildCsvRow, toWibParts } from '../../../../../../lib/api/csv.ts';
 import { logger } from '../../../../../../lib/logging/logger.ts';
 import { Prisma } from '@prisma/client';
 
 const MAX_EXPORT_ROWS = 50000;
 const BATCH_SIZE = 1000;
 
-const DB_TO_SOURCE: Record<string, string> = { MARKET: 'market', FARM: 'farm' };
+const DB_TO_SOURCE: Record<string, string> = { MARKET: 'market', FARM: 'farm', SUPERMARKET: 'supermarket' };
 const DB_TO_STORAGE: Record<string, string> = { ROOM_TEMP: 'room_temp', COLD: 'cold' };
 
 /**
@@ -52,10 +52,13 @@ export async function GET(
       const num = (v: { toNumber(): number } | null | undefined): number | '' =>
         v === null || v === undefined ? '' : v.toNumber();
       const dt = (v: Date | null | undefined): string => (v ? v.toISOString() : '');
+      const procured = toWibParts(full.procuredAtUtc);
+      const arrived = toWibParts(full.arrivedAtUtc);
       const photoCount = await prisma.batchPhoto.count({ where: { batchId } });
       const batchBlock = [
         full.batchId,
-        dt(full.procuredAtUtc),
+        procured.date,
+        procured.time,
         full.marketSource,
         DB_TO_SOURCE[full.sourceType] ?? full.sourceType,
         full.shrimpCount,
@@ -64,7 +67,8 @@ export async function GET(
         num(full.totalWeightG),
         String(full.initialCondition).toLowerCase(),
         num(full.initialTempC),
-        dt(full.arrivedAtUtc),
+        arrived.date,
+        arrived.time,
         num(full.coolerTempMinC),
         num(full.coolerTempMaxC),
         full.iceToShrimpRatio,

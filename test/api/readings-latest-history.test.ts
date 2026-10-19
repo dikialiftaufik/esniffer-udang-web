@@ -313,6 +313,19 @@ describe('HTTP API v1: Latest Reading, Keyset History, and Device Audit Tests', 
     assert.strictEqual(page3Body.meta.nextCursor, null, 'Halaman terakhir harus mengembalikan nextCursor null');
   });
 
+  it('4b. Riwayat menerima rentang jauh ke belakang, >31 hari (butir 10)', async () => {
+    const fromStr = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString(); // 6 bulan lalu
+    const toStr = new Date().toISOString();
+    const req = new Request(
+      `http://localhost:3000/api/v1/chambers/${chamberCode}/history?from=${fromStr}&to=${toStr}&limit=2`,
+      { method: 'GET', headers: { Cookie: adminCookie } }
+    );
+    const res = await getHistoryHandler(req, { params: Promise.resolve({ chamberId: chamberCode }) });
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.data.length >= 1, 'Baris lama harus terbaca dengan rentang 6 bulan');
+  });
+
   it('5. Audit Perangkat: GET /api/v1/devices/[deviceId]/readings?quality=UNKNOWN menemukan data tak berwaktu', async () => {
     const req = new Request(`http://localhost:3000/api/v1/devices/${deviceMqttId}/readings?quality=UNKNOWN`, {
       method: 'GET',

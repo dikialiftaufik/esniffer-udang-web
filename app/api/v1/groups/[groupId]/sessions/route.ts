@@ -71,6 +71,15 @@ export async function POST(
       chamberId = chamber.id;
     }
 
+    // Revisi putaran 2 butir 1 (validasi server): grup dingin mode chamber
+    // wajib menunjuk chamber sebelum sesi berjalan karena chamber menentukan
+    // sumber data sensor. Grup plain_fridge dan grup ruang tidak kena aturan.
+    if (group.storageCondition === 'COLD' && group.coldStorageMode === 'CHAMBER' && !chamberId) {
+      throw validationError(
+        'Grup dingin mode chamber butuh pemilihan chamber sebelum sesi dimulai'
+      );
+    }
+
     let deviceId: string | null = null;
     if (body?.deviceId !== undefined && body?.deviceId !== null) {
       if (typeof body.deviceId !== 'string' || !UUID_REGEX.test(body.deviceId)) {

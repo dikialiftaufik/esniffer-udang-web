@@ -21,6 +21,7 @@ function buildFileName(batchId: string, index: number, mimeType: string): string
 export interface BatchPhotoItem {
   url: string;
   caption: string;
+  groupId: string | null;
 }
 
 /** Daftar foto batch terurut (sumber tunggal kebenaran pengganti array photo_urls). */
@@ -28,9 +29,9 @@ async function listPhotos(batchId: string): Promise<BatchPhotoItem[]> {
   const rows = await prisma.batchPhoto.findMany({
     where: { batchId },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-    select: { url: true, caption: true },
+    select: { url: true, caption: true, groupId: true },
   });
-  return rows.map((r) => ({ url: r.url, caption: r.caption }));
+  return rows.map((r) => ({ url: r.url, caption: r.caption, groupId: r.groupId }));
 }
 
 function assertOwnedUrl(url: unknown, prefix: string, batchId: string): string {
@@ -89,6 +90,21 @@ export async function POST(
     }
     const parsedCaptions = captions.map((c, i) => parsePhotoCaption(c, i));
 
+    // Revisi putaran 2 butir 2: foto boleh dipasangkan ke satu grup tertentu
+    // (foto pengelompokan di step wizard) lewat field "groupId" opsional.
+    const groupIdRaw = form.get('groupId');
+    let groupId: string | null = null;
+    if (typeof groupIdRaw === 'string' && groupIdRaw.trim() !== '') {
+      const group = await prisma.sampleGroup.findFirst({
+        where: { groupId: groupIdRaw.trim(), batchId },
+        select: { groupId: true },
+      });
+      if (!group) {
+        throw notFound(`Grup "${groupIdRaw.trim()}" tidak ada di batch "${batchId}"`);
+      }
+      groupId = group.groupId;
+    }
+
     // Offset penomoran file agar tidak tabrakan dengan foto yang sudah ada.
     const existing = await prisma.batchPhoto.count({ where: { batchId } });
     for (const file of files) {
@@ -116,6 +132,7 @@ export async function POST(
         url: `uploads/${batchId}/${fileName}`,
         caption: parsedCaptions[i],
         sortOrder: existing + i,
+        groupId,
       });
     }
     await prisma.batchPhoto.createMany({ data: rows });

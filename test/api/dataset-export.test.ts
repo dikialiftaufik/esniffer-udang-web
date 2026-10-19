@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { prisma, closeDb, allocateHistorySequence } from '../../lib/db/client.ts';
 import { GET as exportBatch } from '../../app/api/v1/batches/[batchId]/export/route.ts';
-import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, CSV_UTF8_BOM } from '../../lib/api/csv.ts';
+import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, CSV_UTF8_BOM, toWibParts } from '../../lib/api/csv.ts';
 import { hashPassword } from '../../lib/auth/password.ts';
 import { createSession as createAuthSession, buildSessionCookie } from '../../lib/auth/session.ts';
 
@@ -252,29 +252,55 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
     assert.deepStrictEqual([...headBytes], [0xef, 0xbb, 0xbf], 'Metadata wajib diawali BOM UTF-8');
     const lines = metaText.split('\r\n').filter((l) => l.length > 0);
     assert.strictEqual(lines[0].split(',')[0], 'batch_id');
+    const headers = lines[0].split(',');
+    assert.ok(headers.includes('procured_date'), 'butir 5: kolom tanggal beli');
+    assert.ok(headers.includes('procured_time_wib'), 'butir 5: kolom jam beli WIB');
+    assert.ok(headers.includes('arrived_date') && headers.includes('arrived_time_wib'));
+    assert.ok(headers.includes('cooler_temp_market_c'), 'butir 7: suhu saat di pasar');
+    assert.ok(headers.includes('cooler_temp_lab_c'), 'butir 7: suhu saat di lab');
+    assert.ok(!headers.includes('procured_at_utc'), 'kolom ISO lama sudah tidak ada');
+    assert.ok(!headers.includes('cooler_temp_min_c'), 'header min/max lama sudah tidak ada');
     assert.strictEqual(lines.length, 3); // header + SR (punya sesi) + SD (no_session)
 
     const sr = lines.find((l) => l.includes(GROUP))!.split(',');
     assert.strictEqual(sr[0], BATCH);
-    assert.strictEqual(sr[2], 'Pasar Export');
-    assert.strictEqual(sr[6], '12.5'); // shrimp_length_cm batch
-    assert.strictEqual(sr[7], '485.5');
-    assert.strictEqual(sr[17], GROUP);
-    assert.strictEqual(sr[18], 'room_temp');
-    assert.strictEqual(sr[22], '482'); // lab_weight_before_g
-    assert.strictEqual(sr[23], '478.5'); // lab_weight_after_g
-    assert.strictEqual(sr[24], '4'); // sample_shrimp_count
-    assert.strictEqual(sr[25], SESSION);
-    assert.strictEqual(sr[27], '0');
-    assert.strictEqual(sr[30], 'complete');
-    assert.strictEqual(sr[31], 'true');
+    assert.strictEqual(sr[1], '2099-06-06'); // procured_date (UTC+7 dari 00:30Z)
+    assert.strictEqual(sr[2], '07:30:00'); // procured_time_wib
+    assert.strictEqual(sr[3], 'Pasar Export');
+    assert.strictEqual(sr[7], '12.5'); // shrimp_length_cm batch
+    assert.strictEqual(sr[8], '485.5');
+    assert.strictEqual(sr[11], '2099-06-06'); // arrived_date
+    assert.strictEqual(sr[12], '09:00:00'); // arrived_time_wib
+    assert.strictEqual(sr[13], '1.2'); // cooler_temp_market_c
+    assert.strictEqual(sr[14], '3.8'); // cooler_temp_lab_c
+    assert.strictEqual(sr[19], GROUP);
+    assert.strictEqual(sr[20], 'room_temp');
+    assert.strictEqual(sr[24], '482'); // lab_weight_before_g
+    assert.strictEqual(sr[25], '478.5'); // lab_weight_after_g
+    assert.strictEqual(sr[26], '4'); // sample_shrimp_count
+    assert.strictEqual(sr[27], SESSION);
+    assert.strictEqual(sr[29], '0');
+    assert.strictEqual(sr[32], 'complete');
+    assert.strictEqual(sr[33], 'true');
 
     const sd = lines.find((l) => l.includes(`${BATCH}-SD`))!.split(',');
-    assert.strictEqual(sd[17], `${BATCH}-SD`);
-    assert.strictEqual(sd[18], 'cold');
-    assert.strictEqual(sd[23], '476.2'); // lab_weight_after_g grup dingin
-    assert.strictEqual(sd[25], ''); // session_id kosong
-    assert.strictEqual(sd[30], 'no_session'); // ditandai jelas
+    assert.strictEqual(sd[19], `${BATCH}-SD`);
+    assert.strictEqual(sd[20], 'cold');
+    assert.strictEqual(sd[25], '476.2'); // lab_weight_after_g grup dingin
+    assert.strictEqual(sd[27], ''); // session_id kosong
+    assert.strictEqual(sd[32], 'no_session'); // ditandai jelas
+  });
+
+  it('4c. toWibParts memisahkan tanggal dan jam, termasuk kasus lewat tengah malam', () => {
+    // 17:30Z = 00:30 WIB keesokan harinya — tanggal bergeser, bukan jam.
+    assert.deepStrictEqual(toWibParts(new Date('2099-06-05T17:30:00.000Z')), {
+      date: '2099-06-06',
+      time: '00:30:00',
+    });
+    assert.deepStrictEqual(toWibParts(new Date('2099-06-06T00:30:00.000Z')), {
+      date: '2099-06-06',
+      time: '07:30:00',
+    });
   });
 
   it('4b. metadata batch tanpa grup: semua baris selebar header', async () => {

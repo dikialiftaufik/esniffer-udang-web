@@ -10,6 +10,7 @@ import {
   parsePositiveNumber,
   parseBoundedNumber,
   parseIntMinimum,
+  parseColdStorageMode,
 } from '../../../../../../lib/api/dataset.ts';
 
 const TARGET_TEMP: Record<'ROOM_TEMP' | 'COLD', number> = {
@@ -55,6 +56,17 @@ export async function POST(
           throw validationError('Field "sampleShrimpCount" harus 3–5 ekor per chamber');
         }
 
+        // Revisi putaran 2 butir 1: mode penyimpanan diinput eksplisit; tanpa
+        // field, grup memakai CHAMBER (perilaku lama). PLAIN_FRIDGE hanya sah
+        // untuk grup dingin; penugasan chamber terjadi saat sesi dimulai.
+        let coldStorageMode: 'CHAMBER' | 'PLAIN_FRIDGE' = 'CHAMBER';
+        if (item?.coldStorageMode !== undefined) {
+          coldStorageMode = parseColdStorageMode(item.coldStorageMode);
+          if (coldStorageMode === 'PLAIN_FRIDGE' && storageDb !== 'COLD') {
+            throw validationError('Field "coldStorageMode" plain_fridge hanya untuk kondisi cold');
+          }
+        }
+
         const existing = await tx.sampleGroup.findUnique({
           where: { batchId_storageCondition: { batchId, storageCondition: storageDb } },
         });
@@ -70,6 +82,7 @@ export async function POST(
               groupId: buildGroupId(batchId, storageApi),
               batchId,
               storageCondition: storageDb,
+              coldStorageMode,
               targetTempC: TARGET_TEMP[storageDb],
               labTempC,
               visualCheck,

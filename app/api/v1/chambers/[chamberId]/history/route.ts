@@ -83,7 +83,10 @@ export async function GET(
       }
       fromDate = parseIsoDate(rawFrom, 'from', true)!;
       toDate = parseIsoDate(rawTo, 'to', true)!;
-      validateTimeRange(fromDate, toDate, 31 * 24 * 60 * 60 * 1000); // Max 31 days
+      // Revisi putaran 2 butir 10: tabel riwayat mem-filter rentang sampai
+      // satu tahun (dulu 31 hari); paginasi kursor yang sudah ada menahan
+      // ukuran tiap halaman.
+      validateTimeRange(fromDate, toDate, 366 * 24 * 60 * 60 * 1000); // Max 366 days
 
       // Capture snapshot watermark from singleton table — strict, no MAX fallback.
       snapshotWatermark = await getCurrentWatermark();
