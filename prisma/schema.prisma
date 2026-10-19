@@ -276,14 +276,20 @@ model CollectionBatch {
 model BatchPhoto {
   id        String          @id @default(uuid()) @db.Uuid
   batchId   String          @map("batch_id") @db.VarChar(16)
+  // Revisi putaran 2 butir 2: foto bisa menempel ke grup tertentu
+  // (foto dokumentasi per grup di step pengelompokan). NULL = foto batch
+  // (pengadaan). ON DELETE SET NULL: bila grup hilang, foto tetap milik batch.
+  groupId   String?         @map("group_id") @db.VarChar(24)
   url       String          @db.VarChar(500)
   caption   String          @db.VarChar(140)
   sortOrder Int             @map("sort_order")
   createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   batch     CollectionBatch @relation(fields: [batchId], references: [batchId], onDelete: Cascade)
+  group     SampleGroup?    @relation(fields: [groupId], references: [groupId], onDelete: SetNull)
 
   @@unique([batchId, url])
   @@index([batchId, sortOrder])
+  @@index([batchId, groupId])
   @@map("batch_photos")
 }
 
@@ -304,6 +310,7 @@ model SampleGroup {
   batch             CollectionBatch  @relation(fields: [batchId], references: [batchId], onDelete: Restrict)
   chamber           Chamber?         @relation(fields: [chamberId], references: [id], onDelete: Restrict)
   sessions          MeasurementSession[]
+  photos            BatchPhoto[]
 
   @@unique([batchId, storageCondition])
   @@map("sample_groups")

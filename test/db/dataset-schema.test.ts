@@ -378,4 +378,50 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
     assert.strictEqual(groups.length, 2);
     await assert.rejects(prisma.collectionBatch.delete({ where: { batchId: BATCH } }));
   });
+
+  it('foto grup tersimpan dengan groupId dan terbaca via relasi', async () => {
+    const photo = await prisma.batchPhoto.create({
+      data: {
+        batchId: BATCH,
+        groupId: GROUP_SD,
+        url: `https://example.local/grup-${GROUP_SD}.jpg`,
+        caption: 'Udang grup dingin sebelum chamber',
+        sortOrder: 0,
+      },
+    });
+    assert.strictEqual(photo.groupId, GROUP_SD);
+    const withGroup = await prisma.batchPhoto.findUnique({
+      where: { id: photo.id },
+      include: { group: true },
+    });
+    assert.strictEqual(withGroup?.group?.groupId, GROUP_SD);
+    await prisma.batchPhoto.delete({ where: { id: photo.id } });
+  });
+
+  it('foto tanpa groupId tetap foto batch (NULL, perilaku lama)', async () => {
+    const photo = await prisma.batchPhoto.create({
+      data: {
+        batchId: BATCH,
+        url: `https://example.local/batch-${BATCH}.jpg`,
+        caption: 'Foto pengadaan',
+        sortOrder: 0,
+      },
+    });
+    assert.strictEqual(photo.groupId, null);
+    await prisma.batchPhoto.delete({ where: { id: photo.id } });
+  });
+
+  it('FK: foto dengan groupId yang tidak dikenal ditolak', async () => {
+    await assert.rejects(
+      prisma.batchPhoto.create({
+        data: {
+          batchId: BATCH,
+          groupId: 'GRP-TIDAK-ADA',
+          url: `https://example.local/fantasi-${BATCH}.jpg`,
+          caption: 'Tidak boleh tersimpan',
+          sortOrder: 0,
+        },
+      })
+    );
+  });
 });
