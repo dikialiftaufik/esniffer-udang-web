@@ -1,8 +1,14 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../components/auth/AuthProvider';
+import {
+  loadBatchDraft,
+  saveBatchDraft,
+  removeBatchDraft,
+  draftMeaningful,
+} from '../../../lib/batch-draft.ts';
 import {
   isProcurementWindow,
   isColdChainCompliant,
@@ -48,6 +54,8 @@ interface GroupForm {
   labWeightBeforeG: string;
   labWeightAfterG: string;
   sampleShrimpCount: string;
+  /** Butir 1: hanya berarti bagi grup dingin; grup ruang selalu chamber (tanpa chamber aktif). */
+  coldStorageMode: 'chamber' | 'plain_fridge';
 }
 
 const emptyGroup = (): GroupForm => ({
@@ -56,7 +64,161 @@ const emptyGroup = (): GroupForm => ({
   labWeightBeforeG: '',
   labWeightAfterG: '',
   sampleShrimpCount: '4',
+  coldStorageMode: 'chamber',
 });
+
+/** Bangun ulang form grup dari draf tersimpan; nilai tak dikenal diabaikan. */
+const groupFromDraft = (saved: unknown): GroupForm => {
+  const base = emptyGroup();
+  if (typeof saved !== 'object' || saved === null) {
+    return base;
+  }
+  const s = saved as Record<string, unknown>;
+  for (const k of ['labTempC', 'visualCheck', 'labWeightBeforeG', 'labWeightAfterG', 'sampleShrimpCount'] as const) {
+    if (typeof s[k] === 'string') {
+      base[k] = s[k];
+    }
+  }
+  if (s.coldStorageMode === 'chamber' || s.coldStorageMode === 'plain_fridge') {
+    base.coldStorageMode = s.coldStorageMode;
+  }
+  return base;
+};
+
+/** Paket foto siap unggah: berkas + caption per tujuan (butir 2). */
+interface PhotoGroup {
+  files: File[];
+  captions: string[];
+}
+
+const emptyPhotoGroup = (): PhotoGroup => ({ files: [], captions: [] });
+
+const photoFileCls =
+  'text-xs font-mono text-white/60 file:mr-2 file:px-3 file:py-1.5 file:rounded-lg file:bg-white/10 file:border file:border-white/10 file:text-white/80 file:text-xs file:font-mono';
+const photoRemoveCls =
+  'absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-rose-500/90 text-white text-[10px] font-bold leading-none hover:bg-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200';
+
+/**
+ * Pemilih foto wizard (butir 2): mengelola pratinjaunya sendiri lalu melapor
+ * berkas + caption ke induk lewat onChange. Aturan file mengikuti foto batch:
+ * JPG/PNG sampai 5 MB, tiap foto wajib ber-caption.
+ */
+function PhotosBlock({
+  prefix,
+  title,
+  hint,
+  error,
+  onChange,
+}: {
+  prefix: string;
+  title: string;
+  hint: string;
+  error?: string;
+  onChange: (photos: PhotoGroup) => void;
+}) {
+  const [files, setFiles] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const [captions, setCaptions] = useState<string[]>([]);
+  const [note, setNote] = useState('');
+
+  const select = (list: FileList | null, input: HTMLInputElement) => {
+    const incoming = Array.from(list ?? []);
+    const usable = incoming.filter((f) => /image\/(jpeg|png)/.test(f.type) && f.size > 0);
+    const fitting = usable.filter((f) => f.size <= 5 * 1024 * 1024);
+    if (usable.length < incoming.length) {
+      setNote('Hanya file JPG/PNG yang dipakai. File lain dilewati.');
+    } else if (fitting.length < usable.length) {
+      setNote('Tiap foto maksimal 5 MB. File lebih besar dilewati.');
+    } else {
+      setNote('');
+    }
+    const nextFiles = [...files, ...fitting];
+    const nextCaptions = [...captions, ...fitting.map(() => '')];
+    setFiles(nextFiles);
+    setPreviews((prev) => [...prev, ...fitting.map((f) => URL.createObjectURL(f))]);
+    setCaptions(nextCaptions);
+    onChange({ files: nextFiles, captions: nextCaptions });
+    input.value = '';
+  };
+
+  const remove = (index: number) => {
+    URL.revokeObjectURL(previews[index]);
+    const nextFiles = files.filter((_, i) => i !== index);
+    const nextCaptions = captions.filter((_, i) => i !== index);
+    setPreviews(previews.filter((_, i) => i !== index));
+    setFiles(nextFiles);
+    setCaptions(nextCaptions);
+    onChange({ files: nextFiles, captions: nextCaptions });
+  };
+
+  const setCaption = (index: number, value: string) => {
+    const next = captions.map((c, j) => (j === index ? value : c));
+    setCaptions(next);
+    onChange({ files, captions: next });
+  };
+
+  return (
+    <div className={fieldCls}>
+      <label className={labelCls} htmlFor={`${prefix}-photos`}>
+        {title}
+      </label>
+      <input
+        id={`${prefix}-photos`}
+        name={`${prefix}-photos`}
+        type="file"
+        accept="image/jpeg,image/png"
+        capture="environment"
+        multiple
+        onChange={(e) => select(e.target.files, e.target)}
+        className={photoFileCls}
+      />
+      <p className={hintCls}>{hint}</p>
+      {note && !error ? (
+        <p className="text-[11px] font-mono text-amber-300" role="status">
+          {note}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="text-[11px] font-mono text-amber-300" role="status">
+          {error}
+        </p>
+      ) : null}
+      {previews.length > 0 && (
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+          {previews.map((src, i) => (
+            <div key={src} className="relative space-y-1">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={src} alt={`Pratinjau foto ${i + 1}`} className="w-full h-16 object-cover rounded-lg border border-white/10" />
+              <label className={`${labelCls} flex items-center gap-1`} htmlFor={`${prefix}-photo-caption-${i}`}>
+                Caption <span aria-hidden="true" className="text-rose-400">*</span>
+              </label>
+              <input
+                id={`${prefix}-photo-caption-${i}`}
+                name={`${prefix}-photo-caption-${i}`}
+                type="text"
+                maxLength={MAX_PHOTO_CAPTION_LENGTH}
+                autoComplete="off"
+                value={captions[i] ?? ''}
+                aria-required="true"
+                onChange={(e) => setCaption(i, e.target.value)}
+                placeholder="Di pasar…"
+                className={inputCls}
+              />
+              <button
+                type="button"
+                onClick={() => remove(i)}
+                aria-label={`Hapus foto ${i + 1}`}
+                className={photoRemoveCls}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const durationFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
 
@@ -66,6 +228,12 @@ const toNum = (v: string): number | null => {
   if (v.trim() === '') return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : NaN;
+};
+
+/** Format jam device ke nilai `datetime-local` (YYYY-MM-DDTHH:mm). */
+const toLocalInput = (d: Date): string => {
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
 function parseWib(value: string): { date?: Date; error?: string } {
@@ -80,7 +248,15 @@ function parseWib(value: string): { date?: Date; error?: string } {
 export default function NewBatchPage() {
   const { user, isLoading, apiFetch } = useAuth();
   const router = useRouter();
-  const [step, setStep] = useState(0);
+  // Butir 13: muat draf sekali; nilai awal tiap field kembali dari sini.
+  const draft = useMemo(() => loadBatchDraft() ?? {}, []);
+  const [draftRestored, setDraftRestored] = useState(() => draftMeaningful(draft));
+  const skipDraftSave = useRef(false);
+  /** Nilai teks dari draf bila bentuknya cocok — draf rusak aman diabaikan. */
+  const str = (v: unknown, fallback: string): string => (typeof v === 'string' ? v : fallback);
+  const [step, setStep] = useState(() =>
+    typeof draft.step === 'number' && draft.step >= 0 && draft.step <= 2 ? draft.step : 0
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Errors>({});
@@ -88,27 +264,78 @@ export default function NewBatchPage() {
   const { message: notice, notify, dismiss } = useSuccessNotice();
 
   // Tahap A — pengadaan
-  const [procuredAt, setProcuredAt] = useState('');
-  const [marketSource, setMarketSource] = useState('');
-  const [sourceType, setSourceType] = useState('market');
-  const [shrimpCount, setShrimpCount] = useState('12');
-  const [shrimpLengthCm, setShrimpLengthCm] = useState('');
-  const [totalWeightG, setTotalWeightG] = useState('');
-  const [initialCondition, setInitialCondition] = useState('dead');
-  const [initialTempC, setInitialTempC] = useState('');
+  // Butir 5: kedua waktu mulai terisi dari jam device (peramban) saat halaman
+  // dibuka; tetap dapat diedit manual sebelum disimpan. Lazy initializer —
+  // jam device bukan state eksternal yang perlu disinkronkan lewat effect.
+  const [procuredAt, setProcuredAt] = useState(() => str(draft.procuredAt, toLocalInput(new Date())));
+  const [marketSource, setMarketSource] = useState(() => str(draft.marketSource, ''));
+  const [sourceType, setSourceType] = useState(() => str(draft.sourceType, 'market'));
+  const [shrimpCount, setShrimpCount] = useState(() => str(draft.shrimpCount, '12'));
+  const [shrimpLengthCm, setShrimpLengthCm] = useState(() => str(draft.shrimpLengthCm, ''));
+  const [totalWeightG, setTotalWeightG] = useState(() => str(draft.totalWeightG, ''));
+  const [initialCondition, setInitialCondition] = useState(() => str(draft.initialCondition, 'dead'));
+  const [initialTempC, setInitialTempC] = useState(() => str(draft.initialTempC, ''));
   // Tahap A — pengadaan (termasuk cool box dan tiba, pindahan tahap B)
-  const [arrivedAt, setArrivedAt] = useState('');
-  const [coolerMin, setCoolerMin] = useState('');
-  const [coolerMax, setCoolerMax] = useState('');
-  const [deviationAck, setDeviationAck] = useState(false);
+  const [arrivedAt, setArrivedAt] = useState(() => str(draft.arrivedAt, toLocalInput(new Date())));
+  // Butir 7: dua suhu cool box yang berbeda makna — saat di pasar (tercatat
+  // lama diDB sebagai cooler_temp_min_c) dan saat di lab (cooler_temp_max_c).
+  const [coolerMarket, setCoolerMarket] = useState(() => str(draft.coolerMarket, ''));
+  const [coolerLab, setCoolerLab] = useState(() => str(draft.coolerLab, ''));
+  const [deviationAck, setDeviationAck] = useState(() =>
+    typeof draft.deviationAck === 'boolean' ? draft.deviationAck : false
+  );
   // Foto kondisi awal (diunggah setelah batch dibuat)
-  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
-  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
-  const [photoCaptions, setPhotoCaptions] = useState<string[]>([]);
+  const [batchPhotos, setBatchPhotos] = useState<PhotoGroup>(emptyPhotoGroup);
+  const [groupPhotos, setGroupPhotos] = useState<{ sr: PhotoGroup; sd: PhotoGroup }>({
+    sr: emptyPhotoGroup(),
+    sd: emptyPhotoGroup(),
+  });
   const [createdBatchId, setCreatedBatchId] = useState<string | null>(null);
-  // Tahap C — grup SR/SD
-  const [groupSR, setGroupSR] = useState<GroupForm>(emptyGroup());
-  const [groupSD, setGroupSD] = useState<GroupForm>(emptyGroup());
+  // Tahap C — grup SR/SD (nilai awal dari draf bila ada)
+  const [groupSR, setGroupSR] = useState<GroupForm>(() => groupFromDraft(draft.groupSr));
+  const [groupSD, setGroupSD] = useState<GroupForm>(() => groupFromDraft(draft.groupSd));
+
+  // Butir 13: autosave draf pada tiap perubahan form (foto tidak ikut).
+  useEffect(() => {
+    if (skipDraftSave.current) {
+      // Baru saja buang draf: jangan langsung tulis ulang isinya.
+      skipDraftSave.current = false;
+      return;
+    }
+    saveBatchDraft({
+      step,
+      procuredAt,
+      arrivedAt,
+      marketSource,
+      sourceType,
+      shrimpCount,
+      shrimpLengthCm,
+      totalWeightG,
+      initialCondition,
+      initialTempC,
+      coolerMarket,
+      coolerLab,
+      deviationAck,
+      groupSr: groupSR,
+      groupSd: groupSD,
+    });
+  }, [
+    step,
+    procuredAt,
+    arrivedAt,
+    marketSource,
+    sourceType,
+    shrimpCount,
+    shrimpLengthCm,
+    totalWeightG,
+    initialCondition,
+    initialTempC,
+    coolerMarket,
+    coolerLab,
+    deviationAck,
+    groupSR,
+    groupSD,
+  ]);
 
   const setSR = (v: GroupForm) => {
     setGroupSR(v);
@@ -127,10 +354,33 @@ export default function NewBatchPage() {
    * bisa diuji tanpa mengetar satu per satu. Foto tidak diisi:
    * file asli tidak bisa dibuang-buang, jadi tetap dipilih manual.
    */
+  /** Butir 13: buang draf tersimpan dan kembalikan form ke nilai awal. */
+  const discardDraft = () => {
+    removeBatchDraft();
+    skipDraftSave.current = true;
+    setDraftRestored(false);
+    setStep(0);
+    setProcuredAt(toLocalInput(new Date()));
+    setArrivedAt(toLocalInput(new Date()));
+    setMarketSource('');
+    setSourceType('market');
+    setShrimpCount('12');
+    setShrimpLengthCm('');
+    setTotalWeightG('');
+    setInitialCondition('dead');
+    setInitialTempC('');
+    setCoolerMarket('');
+    setCoolerLab('');
+    setDeviationAck(false);
+    setGroupSR(emptyGroup());
+    setGroupSD(emptyGroup());
+    setFieldErrors({});
+    notify('Draf dibuang — form kembali kosong.');
+  };
+
   const fillTestData = () => {
     // Tanggal kalender WIB hari ini (UTC+7).
-    const wibDate = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
-    // Beli di pasar 07:20 (dalam jendela 06:00–08:00) → tiba kembali
+    const wibDate = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);    // Beli di pasar 07:20 (dalam jendela 06:00–08:00) → tiba kembali
     // di lab 07:55 (perjalanan 35 menit).
     const procured = `${wibDate}T07:20`;
 
@@ -148,8 +398,8 @@ export default function NewBatchPage() {
     setInitialTempC('8.5'); // udang baru dibeli, masih ada esnya
     // Tiba di lab (bagian pengadaan)
     setArrivedAt(`${wibDate}T07:55`);
-    setCoolerMin('1.2');
-    setCoolerMax('3.6');
+    setCoolerMarket('1.2');
+    setCoolerLab('3.6');
     // Tahap C — kelompok SR (suhu ruang) dan SD (dingin)
     setGroupSR({
       labTempC: '6.4',
@@ -157,6 +407,7 @@ export default function NewBatchPage() {
       labWeightBeforeG: '472',
       labWeightAfterG: '468.5',
       sampleShrimpCount: '4',
+      coldStorageMode: 'chamber',
     });
     setGroupSD({
       labTempC: '6.4',
@@ -164,6 +415,7 @@ export default function NewBatchPage() {
       labWeightBeforeG: '472',
       labWeightAfterG: '469.2',
       sampleShrimpCount: '4',
+      coldStorageMode: 'chamber',
     });
     setFieldErrors({});
     notify('Form terisi data tes — periksa dulu sebelum Simpan batch.');
@@ -226,7 +478,7 @@ export default function NewBatchPage() {
     } else if (t < -2 || t > 30) {
       e.initialTempC = 'Harus -2 sampai 30 °C.';
     }
-    // Tiba di lab + cool box (pindahan tahap B): cukup beli dan tiba.
+    // Tiba di lab: beli harus sebelum tiba; durasi menentukan aturan deviasi.
     const arr = parseWib(arrivedAt);
     if (arr.error) {
       e.arrivedAt = arr.error;
@@ -238,17 +490,47 @@ export default function NewBatchPage() {
         e.arrivedAt = 'Melebihi 3 jam — centang deviasi di bawah untuk lanjut.';
       }
     }
-    const cmin = toNum(coolerMin);
-    if (cmin === null) {
-      e.coolerMin = 'Wajib diisi.';
-    } else if (cmin < 0 || cmin > 4) {
-      e.coolerMin = 'Harus 0–4 °C.';
+    return e;
+  };
+
+  // Tahap B — kondisi udang, cool box, dan foto dokumentasi (butir 12).
+  const validateStepB = (): Errors => {
+    const e: Errors = {};
+    const count = toNum(shrimpCount);
+    if (count === null) {
+      e.shrimpCount = 'Wajib diisi.';
+    } else if (!Number.isInteger(count) || count < 10) {
+      e.shrimpCount = 'Minimal 10 ekor (bilangan bulat).';
     }
-    const cmax = toNum(coolerMax);
-    if (cmax === null) {
-      e.coolerMax = 'Wajib diisi.';
-    } else if (cmax < 0 || cmax > 4) {
-      e.coolerMax = 'Harus 0–4 °C.';
+    const len = toNum(shrimpLengthCm);
+    if (len === null) {
+      e.shrimpLengthCm = 'Wajib diisi.';
+    } else if (!(len >= 1 && len <= 50)) {
+      e.shrimpLengthCm = 'Harus 1 sampai 50 cm.';
+    }
+    const w = toNum(totalWeightG);
+    if (w === null) {
+      e.totalWeightG = 'Wajib diisi.';
+    } else if (!(w > 0) || w > 2000) {
+      e.totalWeightG = 'Harus lebih dari 0 sampai 2000 gram.';
+    }
+    const t = toNum(initialTempC);
+    if (t === null) {
+      e.initialTempC = 'Wajib diisi.';
+    } else if (t < -2 || t > 30) {
+      e.initialTempC = 'Harus -2 sampai 30 °C.';
+    }
+    const cmarket = toNum(coolerMarket);
+    if (cmarket === null) {
+      e.coolerMarket = 'Wajib diisi.';
+    } else if (cmarket < 0 || cmarket > 4) {
+      e.coolerMarket = 'Harus 0–4 °C.';
+    }
+    const clab = toNum(coolerLab);
+    if (clab === null) {
+      e.coolerLab = 'Wajib diisi.';
+    } else if (clab < 0 || clab > 4) {
+      e.coolerLab = 'Harus 0–4 °C.';
     }
     return e;
   };
@@ -290,7 +572,7 @@ export default function NewBatchPage() {
     ...validateGroup('sd', groupSD),
   });
 
-  const validators = [validateStepA, validateStepC];
+  const validators = [validateStepA, validateStepB, validateStepC];
 
   const focusFirstError = (errs: Errors) => {
     const first = Object.keys(errs)[0];
@@ -341,37 +623,19 @@ export default function NewBatchPage() {
     ) : null;
   const clsFor = (key: string) => (fieldErrors[key] ? inputErrCls : inputCls);
 
-  /** Pilih foto: tambah ke yang sudah ada (bukan mengganti). */
-  const handlePhotoSelect = (list: FileList | null, input: HTMLInputElement) => {
-    const incoming = Array.from(list ?? []);
-    const usable = incoming.filter((f) => /image\/(jpeg|png)/.test(f.type) && f.size > 0);
-    if (usable.length < incoming.length) {
-      setFieldErrors((prev) => ({ ...prev, photos: 'Hanya file JPG/PNG yang dipakai. File lain dilewati.' }));
+  /** Unggah satu paket foto; groupId opsional menautkan ke grup (butir 2). */
+  const uploadPhotosTo = async (batchId: string, photos: PhotoGroup, groupId?: string) => {
+    if (photos.files.length === 0) {
+      return;
     }
-    const fitting = usable.filter((f) => f.size <= 5 * 1024 * 1024);
-    if (fitting.length < usable.length) {
-      setFieldErrors((prev) => ({ ...prev, photos: 'Tiap foto maksimal 5 MB. File lebih besar dilewati.' }));
-    }
-    const accepted = fitting;
-    setPhotoFiles((prev) => [...prev, ...accepted]);
-    setPhotoPreviews((prev) => [...prev, ...accepted.map((f) => URL.createObjectURL(f))]);
-    setPhotoCaptions((prev) => [...prev, ...accepted.map(() => '')]);
-    input.value = '';
-  };
-
-  const removePhoto = (index: number) => {
-    URL.revokeObjectURL(photoPreviews[index]);
-    setPhotoFiles((prev) => prev.filter((_, i) => i !== index));
-    setPhotoPreviews((prev) => prev.filter((_, i) => i !== index));
-    setPhotoCaptions((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const uploadPhotos = async (batchId: string) => {
     const form = new FormData();
-    for (const f of photoFiles) {
+    for (const f of photos.files) {
       form.append('photos', f);
     }
-    form.append('captions', JSON.stringify(photoCaptions));
+    form.append('captions', JSON.stringify(photos.captions));
+    if (groupId) {
+      form.append('groupId', groupId);
+    }
     const res = await apiFetch(`/api/v1/batches/${encodeURIComponent(batchId)}/photos`, {
       method: 'POST',
       body: form,
@@ -397,18 +661,35 @@ export default function NewBatchPage() {
 
   const handleSubmit = async () => {
     const errs = { ...validateStepA(), ...validateStepC() };
-    const badCaption = photoFiles.length > 0
-      ? photoCaptions.findIndex((c) => c.trim() === '' || c.trim().length > MAX_PHOTO_CAPTION_LENGTH)
-      : -1;
-    if (badCaption >= 0) {
-      errs.photos = `Caption foto ke-${badCaption + 1} wajib diisi (maks ${MAX_PHOTO_CAPTION_LENGTH} karakter).`;
+    // Foto batch dan foto tiap grup sama-sama wajib ber-caption bila ada.
+    const captionError = (photos: PhotoGroup): string | null => {
+      const bad = photos.captions.findIndex(
+        (c) => c.trim() === '' || c.trim().length > MAX_PHOTO_CAPTION_LENGTH
+      );
+      return bad >= 0
+        ? `Caption foto ke-${bad + 1} wajib diisi (maks ${MAX_PHOTO_CAPTION_LENGTH} karakter).`
+        : null;
+    };
+    const captionBatch = captionError(batchPhotos);
+    if (captionBatch) {
+      errs.photos = captionBatch;
+    }
+    const captionsSr = captionError(groupPhotos.sr);
+    if (captionsSr) {
+      errs.groupPhotosSr = captionsSr;
+    }
+    const captionsSd = captionError(groupPhotos.sd);
+    if (captionsSd) {
+      errs.groupPhotosSd = captionsSd;
     }
     if (Object.keys(errs).length > 0) {
       setFieldErrors(errs);
       const stepOf = (k: string) =>
-        ['procuredAt', 'marketSource', 'shrimpCount', 'shrimpLengthCm', 'totalWeightG', 'initialTempC', 'photos', 'arrivedAt', 'coolerMin', 'coolerMax'].includes(k)
+        ['procuredAt', 'marketSource', 'arrivedAt'].includes(k)
           ? 0
-          : 1;
+          : ['shrimpCount', 'shrimpLengthCm', 'totalWeightG', 'initialTempC', 'coolerMarket', 'coolerLab', 'photos'].includes(k)
+            ? 1
+            : 2;
       setStep(stepOf(Object.keys(errs)[0]));
       focusFirstError(errs);
       return;
@@ -426,24 +707,35 @@ export default function NewBatchPage() {
         initialCondition,
         initialTempC: Number(initialTempC),
         arrivedAtUtc: new Date(arrivedAt).toISOString(),
-        coolerTempMinC: Number(coolerMin),
-        coolerTempMaxC: Number(coolerMax),
+        coolerTempMinC: Number(coolerMarket),
+        coolerTempMaxC: Number(coolerLab),
         deviationAcknowledged: deviationAck,
       });
-      const toGroup = (g: GroupForm, storageCondition: string) => ({
+      const toGroup = (g: GroupForm, storageCondition: 'room_temp' | 'cold') => ({
         storageCondition,
         labTempC: Number(g.labTempC),
         visualCheck: g.visualCheck,
         labWeightBeforeG: Number(g.labWeightBeforeG),
         labWeightAfterG: Number(g.labWeightAfterG),
         sampleShrimpCount: Number(g.sampleShrimpCount),
+        // Butir 1: mode simpan hanya relevan untuk grup dingin; API default
+        // chamber bila field tak dikirim (grup ruang).
+        ...(storageCondition === 'cold' ? { coldStorageMode: g.coldStorageMode } : {}),
       });
       await postJson(`/api/v1/batches/${encodeURIComponent(batch.batchId)}/groups`, {
         groups: [toGroup(groupSR, 'room_temp'), toGroup(groupSD, 'cold')],
       });
-      if (photoFiles.length > 0) {
+      // Unggah foto batch lalu foto tiap grup (butir 2); kegagalan foto tidak
+      // membatalkan batch yang sudah tersimpan.
+      if (
+        batchPhotos.files.length > 0 ||
+        groupPhotos.sr.files.length > 0 ||
+        groupPhotos.sd.files.length > 0
+      ) {
         try {
-          await uploadPhotos(batch.batchId);
+          await uploadPhotosTo(batch.batchId, batchPhotos);
+          await uploadPhotosTo(batch.batchId, groupPhotos.sr, `${batch.batchId}-SR`);
+          await uploadPhotosTo(batch.batchId, groupPhotos.sd, `${batch.batchId}-SD`);
         } catch (photoErr) {
           setCreatedBatchId(batch.batchId);
           throw new Error(
@@ -452,6 +744,8 @@ export default function NewBatchPage() {
         }
       }
       router.push(`/batches/${encodeURIComponent(batch.batchId)}`);
+      // Batch tersimpan: draf tidak diperlukan lagi.
+      removeBatchDraft();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal menyimpan batch. Periksa isian lalu coba lagi.');
     } finally {
@@ -467,7 +761,7 @@ export default function NewBatchPage() {
     );
   }
 
-  const steps = ['Pengadaan', 'Pengelompokan'];
+  const steps = ['Pengadaan', 'Kondisi & dokumentasi', 'Pengelompokan'];
 
   const radioRow = (
     name: string,
@@ -562,10 +856,27 @@ export default function NewBatchPage() {
           {title}
         </h3>
         <p className={hintCls}>{hint}</p>
+        {prefix === 'sd' && (
+          <div className={fieldCls}>
+            <span className={labelCls}>
+              Tempat penyimpanan sesi dingin
+              {reqMark}
+            </span>
+            {radioRow('sd-cold-mode', g.coldStorageMode, (v) =>
+              set({ coldStorageMode: v as GroupForm['coldStorageMode'] }), [
+              ['chamber', 'Dalam chamber (sensor chamber)'],
+              ['plain_fridge', 'Langsung di kulkas, tanpa chamber'],
+            ])}
+            <p className={hintCls}>
+              Pilih chamber bila udang dan sensor berada bersama di chamber; pilih kulkas bila udang hanya
+              disimpan di kulkas biasa.
+            </p>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-labTempC`}>
-              Suhu dalam udang saat tiba (°C)
+              Suhu udang sebelum observasi (°C)
               {reqMark}
             </label>
             <input
@@ -585,7 +896,7 @@ export default function NewBatchPage() {
             {fieldErrors[`${prefix}-labTempC`] ? (
               fieldMessage(`${prefix}-labTempC`)
             ) : (
-              <p className={hintCls}>Ukur dengan termometer tusuk saat udang tiba.</p>
+              <p className={hintCls}>Ukur dengan termometer tusuk tepat sebelum observasi grup ini dimulai.</p>
             )}
           </div>
           <div className={fieldCls}>
@@ -623,7 +934,7 @@ export default function NewBatchPage() {
             )}
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-sampleShrimpCount`}>
               Jumlah udang per sesi (ekor)
@@ -700,6 +1011,13 @@ export default function NewBatchPage() {
             )}
           </div>
         </div>
+        <PhotosBlock
+          prefix={prefix}
+          title="Foto dokumentasi grup"
+          hint="JPG/PNG sampai 5 MB. Tiap foto wajib ber-caption, mis. udang di chamber, udang di kulkas."
+          error={fieldErrors[`groupPhotos${prefix.toUpperCase()}`]}
+          onChange={(p) => setGroupPhotos((prev) => ({ ...prev, [prefix]: p }))}
+        />
       </fieldset>
     );
   };
@@ -710,7 +1028,7 @@ export default function NewBatchPage() {
         <h2 className="text-xl md:text-2xl font-mono font-black text-white tracking-wide text-balance">Batch baru</h2>
         <p className="text-xs font-mono text-white/60 mt-1">ID batch dan grup dibuat otomatis oleh server.</p>
         <p className="text-xs font-mono text-white/60 mt-1" aria-live="polite">
-          Langkah {step + 1} dari 2
+          Langkah {step + 1} dari 3
         </p>
         <div className="mt-2 flex gap-1.5" aria-hidden="true">
           {steps.map((_, i) => (
@@ -720,13 +1038,27 @@ export default function NewBatchPage() {
         <p className="text-[11px] font-mono text-white/50 mt-2">
           Tanda <span aria-hidden="true" className="text-rose-400">*</span> merah berarti wajib diisi.
         </p>
+        {draftRestored && (
+          <div className="mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-3 py-2">
+            <p className="text-[11px] font-mono text-cyan-100">
+              Draf isian sebelumnya dipulihkan otomatis. Foto tidak ikut tersimpan — pilih ulang bila perlu.
+            </p>
+            <button
+              type="button"
+              onClick={discardDraft}
+              className="shrink-0 self-start sm:self-auto px-3 py-1.5 rounded-lg border border-cyan-300/40 text-cyan-100 text-[11px] font-mono font-bold hover:bg-cyan-400/20"
+            >
+              Buang draf
+            </button>
+          </div>
+        )}
         {AUTO_FILL_ENABLED && (
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
             <button type="button" onClick={fillTestData} className={btnGhost}>
               Isi otomatis (data tes)
             </button>
             <span className="text-[11px] font-mono text-white/40">
-              Uji cepat: mengisi pengadaan dan pengelompokan dengan nilai realistis; foto tetap dipilih manual.
+              Uji cepat: mengisi ketiga langkah dengan nilai realistis; foto tetap dipilih manual.
             </span>
           </div>
         )}
@@ -779,7 +1111,7 @@ export default function NewBatchPage() {
             goToStep(1);
           }}
         >
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className={fieldCls}>
             <label className={labelCls} htmlFor="procuredAt">
               Tanggal dan jam beli (WIB)
@@ -802,7 +1134,7 @@ export default function NewBatchPage() {
             {fieldErrors.procuredAt ? (
               fieldMessage('procuredAt')
             ) : (
-              <p className={hintCls}>Wajib pagi 06:00–08:00 WIB, dan harus sebelum tanggal dan jam tiba. Tersimpan sebagai UTC.</p>
+              <p className={hintCls}>Diisi otomatis dari jam device ini — pastikan jam device benar dulu. Wajib pagi 06:00–08:00 WIB dan sebelum jam tiba.</p>
             )}
           </div>
           <div className={fieldCls}>
@@ -827,7 +1159,7 @@ export default function NewBatchPage() {
             {fieldErrors.arrivedAt ? (
               fieldMessage('arrivedAt')
             ) : (
-              <p className={hintCls}>Tiba kembali di lab; tanggal dan jam beli harus sebelum ini.</p>
+              <p className={hintCls}>Diisi dari jam device ini; perbarui saat benar-benar tiba di lab. Jam beli harus sebelum ini.</p>
             )}
           </div>
           </div>
@@ -852,7 +1184,7 @@ export default function NewBatchPage() {
           )}
           <div className={fieldCls}>
             <label className={labelCls} htmlFor="marketSource">
-              Sumber pasar
+              Sumber
               {reqMark}
             </label>
             <input
@@ -868,26 +1200,43 @@ export default function NewBatchPage() {
                 setMarketSource(e.target.value);
                 revalidateLive(0, { marketSource: fieldErrors.marketSource });
               }}
-              placeholder="Pasar Ciroyom…"
+              placeholder="Pasar Ciroyom, Supermarket X…"
               className={clsFor('marketSource')}
             />
             {fieldErrors.marketSource ? (
               fieldMessage('marketSource')
             ) : (
-              <p className={hintCls}>Tulis bebas nama pasar tempat membeli.</p>
+              <p className={hintCls}>Nama lokasi pembelian, misal: Pasar Induk Kramat Jati, Supermarket X.</p>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className={fieldCls}>
+          <div className={fieldCls}>
             <span className={labelCls}>
               Jenis sumber
               {reqMark}
             </span>
             {radioRow('sourceType', sourceType, setSourceType, [
               ['market', 'Pasar'],
+              ['supermarket', 'Supermarket'],
               ['farm', 'Tambak'],
             ])}
           </div>
+          <div className="sticky bottom-3 z-10 rounded-2xl bg-slate-900/85 backdrop-blur-md border border-white/10 shadow-lg p-2">
+            <button type="submit" className={btnPrimary}>
+              Lanjut ke Kondisi & dokumentasi
+            </button>
+          </div>
+        </form>
+      )}
+
+      {step === 1 && (
+        <form
+          className={cardCls}
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault();
+            goToStep(2);
+          }}
+        >
           <div className={fieldCls}>
             <span className={labelCls}>
               Kondisi awal udang
@@ -899,8 +1248,7 @@ export default function NewBatchPage() {
             ])}
             <p className={hintCls}>Kondisi udang saat dibeli.</p>
           </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className={fieldCls}>
               <label className={labelCls} htmlFor="shrimpCount">
                 Jumlah total udang (ekor)
@@ -918,7 +1266,7 @@ export default function NewBatchPage() {
                 aria-invalid={!!fieldErrors.shrimpCount}
                 onChange={(e) => {
                   setShrimpCount(e.target.value);
-                  revalidateLive(0, { shrimpCount: fieldErrors.shrimpCount });
+                  revalidateLive(1, { shrimpCount: fieldErrors.shrimpCount });
                 }}
                 className={clsFor('shrimpCount')}
               />
@@ -932,87 +1280,46 @@ export default function NewBatchPage() {
               hint: 'Dari bekas potongan kepala sampai ujung ekor (telson).',
             })}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {numberField('totalWeightG', 'Berat total udang (gram)', totalWeightG, (v) => {
               setTotalWeightG(v);
-              revalidateLive(0, { totalWeightG: fieldErrors.totalWeightG });
+              revalidateLive(1, { totalWeightG: fieldErrors.totalWeightG });
             }, { placeholder: '485.5…', hint: 'Timbang seluruh udang sekaligus.' })}
             {numberField('initialTempC', 'Suhu awal udang (°C)', initialTempC, (v) => {
               changeInitialTempC(v);
-              revalidateLive(0, { initialTempC: fieldErrors.initialTempC });
-            }, { placeholder: '8.2…', hint: 'Ukur dengan termometer tusuk.' })}
+              revalidateLive(1, { initialTempC: fieldErrors.initialTempC });
+            }, { placeholder: '8.2…', hint: 'Ukur dengan termometer tusuk saat udang tiba.' })}
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {numberField('coolerMin', 'Suhu cool box min (°C)', coolerMin, (v) => {
-              setCoolerMin(v);
-              revalidateLive(0, { coolerMin: fieldErrors.coolerMin });
-            }, { placeholder: '1.2…' })}
-            {numberField('coolerMax', 'Suhu cool box max (°C)', coolerMax, (v) => {
-              setCoolerMax(v);
-              revalidateLive(0, { coolerMax: fieldErrors.coolerMax });
-            }, { placeholder: '3.8…' })}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {numberField('coolerMarket', 'Suhu cool box saat di pasar (°C)', coolerMarket, (v) => {
+              setCoolerMarket(v);
+              revalidateLive(1, { coolerMarket: fieldErrors.coolerMarket });
+            }, { placeholder: '1.2…', hint: 'Pasang termometer di es lalu catat saat membeli.' })}
+            {numberField('coolerLab', 'Suhu cool box saat di lab (°C)', coolerLab, (v) => {
+              setCoolerLab(v);
+              revalidateLive(1, { coolerLab: fieldErrors.coolerLab });
+            }, { placeholder: '3.8…', hint: 'Catat lagi saat tiba di lab, sebelum observasi.' })}
           </div>
-          <p className={hintCls}>Jaga 0–4 °C dengan rasio es:udang 2:1.</p>
-          <div className={fieldCls}>
-            <label className={labelCls} htmlFor="photos">
-              Foto kondisi awal
-            </label>
-            <input
-              id="photos"
-              name="photos"
-              type="file"
-              accept="image/jpeg,image/png"
-              multiple
-              onChange={(e) => handlePhotoSelect(e.target.files, e.target)}
-              className="text-xs font-mono text-white/60 file:mr-2 file:px-3 file:py-1.5 file:rounded-lg file:bg-white/10 file:border file:border-white/10 file:text-white/80 file:text-xs file:font-mono"
-            />
-            <p className={hintCls}>JPG/PNG sampai 5 MB (bisa tambah bertahap, tanpa batas jumlah). Tiap foto wajib ber-caption (mis. di pasar, sebelum chamber). Minimal 1 foto sebelum batch dikunci.</p>
-            {fieldErrors.photos && (
-              <p className="text-[11px] font-mono text-amber-300" role="status">
-                {fieldErrors.photos}
-              </p>
-            )}
-            {photoPreviews.length > 0 && (
-              <div className="grid grid-cols-4 gap-2">
-                {photoPreviews.map((src, i) => (
-                  <div key={src} className="relative space-y-1">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={src} alt={`Pratinjau foto ${i + 1}`} className="w-full h-16 object-cover rounded-lg border border-white/10" />
-                    <label className={`${labelCls} flex items-center gap-1`} htmlFor={`photo-caption-${i}`}>
-                      Caption <span aria-hidden="true" className="text-rose-400">*</span>
-                    </label>
-                    <input
-                      id={`photo-caption-${i}`}
-                      name={`photo-caption-${i}`}
-                      type="text"
-                      maxLength={MAX_PHOTO_CAPTION_LENGTH}
-                      autoComplete="off"
-                      value={photoCaptions[i] ?? ''}
-                      aria-required="true"
-                      onChange={(e) => setPhotoCaptions((prev) => prev.map((c, j) => (j === i ? e.target.value : c)))}
-                      placeholder="Di pasar…"
-                      className={inputCls}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removePhoto(i)}
-                      aria-label={`Hapus foto ${i + 1}`}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-rose-500/90 text-white text-[10px] font-bold leading-none hover:bg-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+          <p className={hintCls}>Cool box dijaga 0–4 °C dengan rasio es:udang 2:1 di kedua titik ukur.</p>
+          <PhotosBlock
+            prefix="batch"
+            title="Foto kondisi awal"
+            hint="JPG/PNG sampai 5 MB (bisa tambah bertahap, tanpa batas jumlah). Tiap foto wajib ber-caption (mis. di pasar, sebelum chamber). Minimal 1 foto sebelum batch dikunci."
+            error={fieldErrors.photos}
+            onChange={setBatchPhotos}
+          />
+          <div className="sticky bottom-3 z-10 flex gap-2 p-2 rounded-2xl bg-slate-900/85 backdrop-blur-md border border-white/10 shadow-lg">
+            <button type="button" onClick={() => goToStep(0)} disabled={submitting} className={btnBack}>
+              Kembali
+            </button>
+            <button type="submit" className={`${btnPrimary} flex-[2]`}>
+              Lanjut ke Pengelompokan
+            </button>
           </div>
-          <button type="submit" className={btnPrimary}>
-            Lanjut ke Pengelompokan
-          </button>
         </form>
       )}
 
-      {step === 1 && (
+      {step === 2 && (
         <div className="flex flex-col gap-4">
           {groupCard(
             'sr',
@@ -1026,12 +1333,12 @@ export default function NewBatchPage() {
             'sd',
             'group-title-sd',
             'Suhu Dingin (4 ± 1 °C)',
-            'Diukur tiap 24 jam selama 10–14 hari.',
+            'Diukur tiap 24 jam selama 10–14 hari, sesuai tempat penyimpanan yang dipilih.',
             groupSD,
             setSD
           )}
-          <div className="flex gap-2">
-            <button type="button" onClick={() => goToStep(0)} disabled={submitting} className={btnBack}>
+          <div className="sticky bottom-3 z-10 flex gap-2 p-2 rounded-2xl bg-slate-900/85 backdrop-blur-md border border-white/10 shadow-lg">
+            <button type="button" onClick={() => goToStep(1)} disabled={submitting} className={btnBack}>
               Kembali
             </button>
             <button

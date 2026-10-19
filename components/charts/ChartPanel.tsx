@@ -246,7 +246,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
       <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
         <div>
           <h2 className="text-lg font-black text-white/90 uppercase tracking-wider drop-shadow-md">
-            Pergerakan Gas Aktif
+            Pergerakan Sensor Gas Aktif
           </h2>
           <span className="text-[10px] font-mono text-white/60 tracking-wider">
             Telemetri Konsentrasi ADC (Nilai Gas: Raw ADC)
@@ -296,8 +296,8 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
         </div>
       </div>
 
-      {/* Chart Body */}
-      <div className="flex-1 w-full min-h-[220px]">
+      {/* Chart Body — layar sempit dapat sedikit tinggi ekstra agar tetap terbaca */}
+      <div className="flex-1 w-full min-h-[320px] sm:min-h-[220px]">
         {isLoading && mergedData.length === 0 ? (
           <div className="flex items-center justify-center h-full text-white/50 font-mono text-sm">
             <div className="flex items-center gap-2">

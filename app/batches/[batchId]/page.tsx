@@ -20,6 +20,7 @@ interface SessionItem {
 interface GroupItem {
   groupId: string;
   storageCondition: string;
+  coldStorageMode: string;
   targetTempC: number | null;
   labTempC: number | null;
   visualCheck: string;
@@ -32,6 +33,7 @@ interface GroupItem {
 interface PhotoItem {
   url: string;
   caption: string;
+  groupId: string | null;
 }
 
 interface BatchDetail {
@@ -76,7 +78,7 @@ const dtFmt = new Intl.DateTimeFormat('id-ID', {
 /** Angka id-ID (koma desimal) — dipakai semua nilai numerik di section ini. */
 const numFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
 
-const SOURCE_LABEL: Record<string, string> = { market: 'Pasar', farm: 'Tambak' };
+const SOURCE_LABEL: Record<string, string> = { market: 'Pasar', supermarket: 'Supermarket', farm: 'Tambak' };
 const CONDITION_LABEL: Record<string, string> = { alive: 'Hidup saat dibeli', dead: 'Mati saat dibeli' };
 const VISUAL_LABEL: Record<string, string> = {
   normal: 'Normal',
@@ -132,9 +134,7 @@ export default function BatchDetailPage() {
   const [warmup, setWarmup] = useState<Record<string, boolean>>({});
   const [cleaning, setCleaning] = useState<Record<string, boolean>>({});
   const [chSel, setChSel] = useState<Record<string, string>>({});
-  const [devSel, setDevSel] = useState<Record<string, string>>({});
   const [chambers, setChambers] = useState<Array<{ id: string; code: string; name: string }>>([]);
-  const [devices, setDevices] = useState<Array<{ id: string; mqttDeviceId: string; name: string }>>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [filePreviews, setFilePreviews] = useState<string[]>([]);
   const [fileCaptions, setFileCaptions] = useState<string[]>([]);
@@ -142,6 +142,14 @@ export default function BatchDetailPage() {
   const [savingCaption, setSavingCaption] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [confirmPhoto, setConfirmPhoto] = useState<{ message: string; photoUrl: string } | null>(null);
+  // Butir 3: edit parsial data grup di halaman detail (PATCH /groups/[id]).
+  const [editGroupId, setEditGroupId] = useState<string | null>(null);
+  const [groupDraft, setGroupDraft] = useState<{
+    labTempC: string;
+    labWeightBeforeG: string;
+    labWeightAfterG: string;
+  } | null>(null);
+  const [savingGroup, setSavingGroup] = useState(false);
   const { message: notice, notify, dismiss } = useSuccessNotice();
 
   useEffect(() => {
@@ -200,19 +208,6 @@ export default function BatchDetailPage() {
         }
       })
       .catch(() => {});
-    apiFetch('/api/v1/devices?limit=100')
-      .then(async (res) => {
-        if (!res.ok) return;
-        const json = await res.json();
-        if (Array.isArray(json.data)) {
-          setDevices(json.data.map((d: { id: string; mqttDeviceId?: string; name?: string }) => ({
-            id: d.id,
-            mqttDeviceId: d.mqttDeviceId || d.id,
-            name: d.name || d.mqttDeviceId || d.id,
-          })));
-        }
-      })
-      .catch(() => {});
   }, [user, apiFetch]);
 
   const callJson = async (url: string, payload: unknown) => {
@@ -263,8 +258,8 @@ export default function BatchDetailPage() {
       await callJson(`/api/v1/groups/${encodeURIComponent(g.groupId)}/sessions`, {
         timepointCode,
         warmupDone: true,
+        // Butir 4: device tak lagi dipilih manual — sesuai chamber yang dipilih.
         chamberId: chSel[g.groupId] || null,
-        deviceId: devSel[g.groupId] || null,
       });
       notify(`Sesi ${timepointCode} berhasil dimulai.`);
       refresh();
@@ -430,6 +425,52 @@ export default function BatchDetailPage() {
     }
   };
 
+  /** Butir 3: buka form edit data grup di halaman detail. */
+  const startGroupEdit = (g: GroupItem) => {
+    setEditGroupId(g.groupId);
+    setGroupDraft({
+      labTempC: g.labTempC === null ? '' : String(g.labTempC),
+      labWeightBeforeG: g.labWeightBeforeG === null ? '' : String(g.labWeightBeforeG),
+      labWeightAfterG: g.labWeightAfterG === null ? '' : String(g.labWeightAfterG),
+    });
+  };
+
+  const saveGroupEdit = async (g: GroupItem) => {
+    if (!groupDraft) {
+      return;
+    }
+    for (const v of [groupDraft.labTempC, groupDraft.labWeightBeforeG, groupDraft.labWeightAfterG]) {
+      if (v.trim() === '' || !Number.isFinite(Number(v))) {
+        notify('Ketiga nilai harus angka yang sah — periksa kembali.');
+        return;
+      }
+    }
+    setSavingGroup(true);
+    try {
+      const res = await apiFetch(`/api/v1/groups/${encodeURIComponent(g.groupId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          labTempC: Number(groupDraft.labTempC),
+          labWeightBeforeG: Number(groupDraft.labWeightBeforeG),
+          labWeightAfterG: Number(groupDraft.labWeightAfterG),
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error?.message || `Gagal menyimpan grup (kode ${res.status}).`);
+      }
+      setEditGroupId(null);
+      setGroupDraft(null);
+      notify('Data grup berhasil diperbarui.');
+      refresh();
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Gagal menyimpan grup.');
+    } finally {
+      setSavingGroup(false);
+    }
+  };
+
   if (isLoading || !user) {
     return (
       <div className="flex justify-center py-16">
@@ -536,7 +577,7 @@ export default function BatchDetailPage() {
           <p className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
             Pengadaan
           </p>
-          <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3">
+          <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3">
             <DataPair label="Tanggal dan jam beli (WIB)" value={dtFmt.format(new Date(batch.procuredAtUtc))} />
             <DataPair label="Tanggal dan jam tiba di lab (WIB)" value={dtFmt.format(new Date(batch.arrivedAtUtc))} />
             <DataPair label="Durasi beli ke tiba" value={durationText(batch.procuredAtUtc, batch.arrivedAtUtc)} />
@@ -549,11 +590,11 @@ export default function BatchDetailPage() {
             <DataPair label="Ukuran (ekor/kg)" value={num(batch.sizeGrade)} />
             <DataPair label="Suhu awal udang (°C)" value={num(batch.initialTempC, ' °C')} />
             <DataPair
-              label="Suhu cool box min–max (°C)"
+              label="Suhu cool box pasar → lab (°C)"
               value={
                 batch.coolerTempMinC === null && batch.coolerTempMaxC === null
                   ? EM_DASH
-                  : `${num(batch.coolerTempMinC)} – ${num(batch.coolerTempMaxC, ' °C')}`
+                  : `${num(batch.coolerTempMinC)} → ${num(batch.coolerTempMaxC, ' °C')}`
               }
             />
           </dl>
@@ -572,15 +613,79 @@ export default function BatchDetailPage() {
                 }`}
               >
                 <p className="text-xs font-mono font-bold text-white">
-                  {g.groupId} • {g.storageCondition === 'cold' ? 'Suhu Dingin (4 ± 1 °C)' : 'Suhu Ruang (25 ± 2 °C)'}
+                  {g.groupId} •{' '}
+                  {g.storageCondition === 'cold'
+                    ? `Suhu Dingin, ${g.coldStorageMode === 'plain_fridge' ? 'langsung di kulkas' : 'chamber'} (4 ± 1 °C)`
+                    : 'Suhu Ruang (25 ± 2 °C)'}
                 </p>
-                <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3 mt-1.5">
-                  <DataPair label="Suhu dalam udang saat tiba (°C)" value={num(g.labTempC, ' °C')} />
+                <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3 mt-1.5">
+                  <DataPair label="Suhu udang sebelum observasi (°C)" value={num(g.labTempC, ' °C')} />
                   <DataPair label="Temuan visual udang" value={VISUAL_LABEL[g.visualCheck] ?? g.visualCheck} />
                   <DataPair label="Jumlah udang per sesi (ekor)" value={num(g.sampleShrimpCount)} />
                   <DataPair label="Berat sampel sebelum observasi (g)" value={num(g.labWeightBeforeG, ' g')} />
                   <DataPair label="Berat sampel sesudah observasi (g)" value={num(g.labWeightAfterG, ' g')} />
                 </dl>
+                {isAdmin && !locked && editGroupId !== g.groupId && (
+                  <button type="button" onClick={() => startGroupEdit(g)} className={btnGhost}>
+                    Edit data grup
+                  </button>
+                )}
+                {isAdmin && !locked && editGroupId === g.groupId && groupDraft && (
+                  <form
+                    noValidate
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void saveGroupEdit(g);
+                    }}
+                    className="border-t border-white/10 pt-3 space-y-2"
+                  >
+                    <p className="text-[11px] font-mono text-white/60">
+                      Field memakai aturan yang sama dengan wizard: suhu -2 sampai 30 °C, berat sampai 2000 g.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {(
+                        [
+                          ['labTempC', 'Suhu udang sebelum observasi (°C)', '6.5…'],
+                          ['labWeightBeforeG', 'Berat sampel sebelum observasi (g)', '482.0…'],
+                          ['labWeightAfterG', 'Berat sampel sesudah observasi (g)', '478.5…'],
+                        ] as const
+                      ).map(([key, label, placeholder]) => (
+                        <label key={key} className="flex flex-col gap-1">
+                          <span className="text-[11px] font-mono font-semibold text-white/80">{label}</span>
+                          <input
+                            type="number"
+                            step="0.1"
+                            inputMode="decimal"
+                            autoComplete="off"
+                            value={groupDraft[key]}
+                            aria-required="true"
+                            onChange={(e) =>
+                              setGroupDraft((prev) => (prev ? { ...prev, [key]: e.target.value } : prev))
+                            }
+                            placeholder={placeholder}
+                            className="w-full px-3 py-2 rounded-xl bg-black/25 border border-white/10 text-sm font-mono text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-400/60"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="submit" disabled={savingGroup} className={btnPrimary}>
+                        Simpan perubahan
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditGroupId(null);
+                          setGroupDraft(null);
+                        }}
+                        disabled={savingGroup}
+                        className={btnGhost}
+                      >
+                        Batal
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
             ))}
           </div>
@@ -590,11 +695,19 @@ export default function BatchDetailPage() {
       <div className={cardCls}>
         <h3 className="text-sm font-mono font-bold text-white tracking-widest">FOTO DOKUMENTASI ({batch.photos.length})</h3>
         {batch.photos.length > 0 && (
-          <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
             {batch.photos.map((p, i) => (
               <div key={p.url} className="relative space-y-1">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={`/${p.url}`} alt={p.caption || `Dokumentasi batch ${i + 1}`} className="w-full h-20 object-cover rounded-lg border border-white/10" />
+                {p.groupId ? (
+                  <span
+                    aria-label={`Foto grup ${p.groupId.slice(-2)}`}
+                    className="absolute top-1 left-1 z-10 px-1.5 py-0.5 rounded-md bg-cyan-500/30 border border-cyan-300/40 text-cyan-100 text-[9px] font-mono font-bold"
+                  >
+                    {p.groupId.slice(-2)}
+                  </span>
+                ) : null}
                 {isAdmin && !locked ? (
                   <div className="flex gap-1">
                     <input
@@ -648,6 +761,7 @@ export default function BatchDetailPage() {
               <input
                 type="file"
                 accept="image/jpeg,image/png"
+                capture="environment"
                 multiple
                 aria-label="Pilih file foto untuk diunggah"
                 onChange={(e) => handlePhotoSelect(e.target.files, e.currentTarget)}
@@ -664,7 +778,7 @@ export default function BatchDetailPage() {
             {files.length === 0 ? (
               <p className="text-[11px] font-mono text-white/50">Belum ada foto dipilih — pratinjau tampil di sini sebelum diunggah.</p>
             ) : (
-              <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                 {filePreviews.map((src, i) => (
                   <div key={src} className="relative space-y-1">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -783,7 +897,7 @@ export default function BatchDetailPage() {
               </details>
             )}
             {g.sessions.length === 0 && (
-              <p className="text-xs font-mono text-white/50">Belum ada sesi pengukuran. Pilih timepoint di bawah lalu mulai sesi pertama.</p>
+              <p className="text-xs font-mono text-white/50">Belum ada sesi observasi. Pilih timepoint di bawah lalu mulai sesi pertama.</p>
             )}
             {isAdmin && !locked && available.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -814,21 +928,6 @@ export default function BatchDetailPage() {
                     </option>
                   ))}
                 </select>
-                <select
-                  value={devSel[g.groupId] || ''}
-                  onChange={(e) => setDevSel({ ...devSel, [g.groupId]: e.target.value })}
-                  aria-label="Device sesi (opsional, wajib agar data tertaut)"
-                  className="px-3 py-2 rounded-xl bg-black/25 border border-white/10 text-xs font-mono text-white max-w-[180px]"
-                >
-                  <option value="" className="bg-slate-900">
-                    Device: —
-                  </option>
-                  {devices.map((d) => (
-                    <option key={d.id} value={d.id} className="bg-slate-900">
-                      {d.mqttDeviceId}
-                    </option>
-                  ))}
-                </select>
                 <label className="flex items-center gap-1.5 text-[11px] font-mono text-white/70 cursor-pointer">
                   <input
                     type="checkbox"
@@ -842,9 +941,9 @@ export default function BatchDetailPage() {
                   Start Sesi
                 </button>
                 <p className="w-full text-[11px] font-mono text-white/45">
-                  {chSel[g.groupId] || devSel[g.groupId]
-                    ? 'Chamber + device terisi: data sensor otomatis tertaut ke sesi.'
-                    : 'Chamber + device kosong: sesi ini tidak akan punya data sensor.'}
+                  {chSel[g.groupId]
+                    ? 'Chamber terisi: sensor chamber otomatis tertaut ke sesi.'
+                    : 'Chamber kosong: sesi ini tidak akan punya data sensor.'}
                 </p>
               </div>
             )}

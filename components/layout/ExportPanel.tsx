@@ -43,6 +43,48 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
   // from/to yang identik atau kursor ditolak server (filter hash mismatch).
   const windowRef = useRef<{ from: string; to: string } | null>(null);
 
+  // Butir 10: tabel riwayat punya filter rentang sendiri — preset atau kustom
+  // WIB (datetime-local memakai jam device). Berbeda dari range grafik URL.
+  const [historyMode, setHistoryMode] = useState<'24h' | '7d' | '30d' | 'custom'>('24h');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+
+  const getHistoryBounds = (
+    mode: '24h' | '7d' | '30d' | 'custom' = historyMode,
+    fromRaw = customFrom,
+    toRaw = customTo
+  ): { from: string; to: string } | null => {
+    const now = new Date();
+    const hours = mode === '24h' ? 24 : mode === '7d' ? 24 * 7 : mode === '30d' ? 24 * 30 : 0;
+    if (hours === 0) {
+      if (!fromRaw || !toRaw) return null;
+      const from = new Date(fromRaw);
+      const to = new Date(toRaw);
+      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) return null;
+      return { from: from.toISOString(), to: to.toISOString() };
+    }
+    return { from: new Date(now.getTime() - hours * 3_600_000).toISOString(), to: now.toISOString() };
+  };
+
+  /** Ganti rentang tabel riwayat dan muat ulang halaman 1. */
+  const applyHistoryRange = (mode: '24h' | '7d' | '30d' | 'custom', from = '', to = '') => {
+    if (mode === 'custom') {
+      const f = from || customFrom;
+      const t = to || customTo;
+      setCustomFrom(f);
+      setCustomTo(t);
+      if (!getHistoryBounds('custom', f, t)) {
+        setHistoryError('Isi kedua tanggal dan jam kustom; "dari" harus sebelum "tujuan".');
+        return;
+      }
+    }
+    setHistoryMode(mode);
+    setHistoryError(null);
+    cursorStackRef.current = [null];
+    windowRef.current = null;
+    void fetchHistoryPage(null, 1, true);
+  };
+
   const getRangeBounds = () => {
     const now = new Date();
     let durationMs = 60 * 60 * 1000; // 1h default
@@ -106,7 +148,13 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
     setHistoryError(null);
 
     if (resetWindow || !windowRef.current) {
-      windowRef.current = getRangeBounds();
+      const bounds = getHistoryBounds();
+      if (!bounds) {
+        setHistoryError('Rentang kustom belum lengkap atau urutannya salah.');
+        setIsHistoryLoading(false);
+        return;
+      }
+      windowRef.current = bounds;
     }
     const { from, to } = windowRef.current;
     const query = new URLSearchParams({
@@ -311,7 +359,15 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                   </h3>
                 </div>
                 <p className="mt-1.5 text-[11px] font-mono text-white/50">
-                  Rentang {rangeParam} · 15 baris/halaman · Halaman {historyPage}
+                  Rentang{' '}
+                  {historyMode === '24h'
+                    ? '24 jam terakhir'
+                    : historyMode === '7d'
+                      ? '7 hari terakhir'
+                      : historyMode === '30d'
+                        ? '30 hari terakhir'
+                        : 'kustom'}{' '}
+                  · 15 baris/halaman · Halaman {historyPage}
                 </p>
               </div>
               <button
@@ -327,6 +383,46 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
             </div>
 
             <div className="px-6 pt-3">
+              {/* Butir 10: filter rentang tabel riwayat */}
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                {(['24h', '7d', '30d'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => applyHistoryRange(mode)}
+                    className={`px-3 py-1.5 rounded-xl border text-[11px] font-mono cursor-pointer touch-manipulation transition-colors ${
+                      mode === historyMode
+                        ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-100'
+                        : 'bg-black/20 border-white/10 text-white/70 hover:border-white/25'
+                    }`}
+                  >
+                    {mode === '24h' ? '24 jam terakhir' : mode === '7d' ? '7 hari terakhir' : '30 hari terakhir'}
+                  </button>
+                ))}
+                <span className="text-[11px] font-mono text-white/50">Kustom (jam device):</span>
+                <input
+                  type="datetime-local"
+                  value={customFrom}
+                  onChange={(e) => setCustomFrom(e.target.value)}
+                  aria-label="Dari tanggal dan jam (kustom)"
+                  className="px-2 py-1.5 rounded-lg bg-black/25 border border-white/10 text-[11px] font-mono text-white max-w-[190px]"
+                />
+                <span aria-hidden="true" className="text-white/40 text-[11px] font-mono">→</span>
+                <input
+                  type="datetime-local"
+                  value={customTo}
+                  onChange={(e) => setCustomTo(e.target.value)}
+                  aria-label="Sampai tanggal dan jam (kustom)"
+                  className="px-2 py-1.5 rounded-lg bg-black/25 border border-white/10 text-[11px] font-mono text-white max-w-[190px]"
+                />
+                <button
+                  type="button"
+                  onClick={() => applyHistoryRange('custom', customFrom, customTo)}
+                  className="px-3 py-1.5 rounded-xl border border-cyan-400/40 bg-cyan-500/15 text-cyan-100 text-[11px] font-mono font-bold hover:bg-cyan-500/25"
+                >
+                  Terapkan kustom
+                </button>
+              </div>
               {historyError && (
                 <div className="mb-3 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs font-mono">
                   {historyError}
