@@ -33,6 +33,7 @@ interface GroupItem {
 interface PhotoItem {
   url: string;
   caption: string;
+  groupId: string | null;
 }
 
 interface BatchDetail {
@@ -599,6 +600,14 @@ export default function BatchDetailPage() {
               <div key={p.url} className="relative space-y-1">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={`/${p.url}`} alt={p.caption || `Dokumentasi batch ${i + 1}`} className="w-full h-20 object-cover rounded-lg border border-white/10" />
+                {p.groupId ? (
+                  <span
+                    aria-label={`Foto grup ${p.groupId.slice(-2)}`}
+                    className="absolute top-1 left-1 z-10 px-1.5 py-0.5 rounded-md bg-cyan-500/30 border border-cyan-300/40 text-cyan-100 text-[9px] font-mono font-bold"
+                  >
+                    {p.groupId.slice(-2)}
+                  </span>
+                ) : null}
                 {isAdmin && !locked ? (
                   <div className="flex gap-1">
                     <input

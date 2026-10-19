@@ -61,6 +61,140 @@ const emptyGroup = (): GroupForm => ({
   coldStorageMode: 'chamber',
 });
 
+/** Paket foto siap unggah: berkas + caption per tujuan (butir 2). */
+interface PhotoGroup {
+  files: File[];
+  captions: string[];
+}
+
+const emptyPhotoGroup = (): PhotoGroup => ({ files: [], captions: [] });
+
+const photoFileCls =
+  'text-xs font-mono text-white/60 file:mr-2 file:px-3 file:py-1.5 file:rounded-lg file:bg-white/10 file:border file:border-white/10 file:text-white/80 file:text-xs file:font-mono';
+const photoRemoveCls =
+  'absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-rose-500/90 text-white text-[10px] font-bold leading-none hover:bg-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200';
+
+/**
+ * Pemilih foto wizard (butir 2): mengelola pratinjaunya sendiri lalu melapor
+ * berkas + caption ke induk lewat onChange. Aturan file mengikuti foto batch:
+ * JPG/PNG sampai 5 MB, tiap foto wajib ber-caption.
+ */
+function PhotosBlock({
+  prefix,
+  title,
+  hint,
+  error,
+  onChange,
+}: {
+  prefix: string;
+  title: string;
+  hint: string;
+  error?: string;
+  onChange: (photos: PhotoGroup) => void;
+}) {
+  const [files, setFiles] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const [captions, setCaptions] = useState<string[]>([]);
+  const [note, setNote] = useState('');
+
+  const select = (list: FileList | null, input: HTMLInputElement) => {
+    const incoming = Array.from(list ?? []);
+    const usable = incoming.filter((f) => /image\/(jpeg|png)/.test(f.type) && f.size > 0);
+    const fitting = usable.filter((f) => f.size <= 5 * 1024 * 1024);
+    if (usable.length < incoming.length) {
+      setNote('Hanya file JPG/PNG yang dipakai. File lain dilewati.');
+    } else if (fitting.length < usable.length) {
+      setNote('Tiap foto maksimal 5 MB. File lebih besar dilewati.');
+    } else {
+      setNote('');
+    }
+    const nextFiles = [...files, ...fitting];
+    const nextCaptions = [...captions, ...fitting.map(() => '')];
+    setFiles(nextFiles);
+    setPreviews((prev) => [...prev, ...fitting.map((f) => URL.createObjectURL(f))]);
+    setCaptions(nextCaptions);
+    onChange({ files: nextFiles, captions: nextCaptions });
+    input.value = '';
+  };
+
+  const remove = (index: number) => {
+    URL.revokeObjectURL(previews[index]);
+    const nextFiles = files.filter((_, i) => i !== index);
+    const nextCaptions = captions.filter((_, i) => i !== index);
+    setPreviews(previews.filter((_, i) => i !== index));
+    setFiles(nextFiles);
+    setCaptions(nextCaptions);
+    onChange({ files: nextFiles, captions: nextCaptions });
+  };
+
+  const setCaption = (index: number, value: string) => {
+    const next = captions.map((c, j) => (j === index ? value : c));
+    setCaptions(next);
+    onChange({ files, captions: next });
+  };
+
+  return (
+    <div className={fieldCls}>
+      <label className={labelCls} htmlFor={`${prefix}-photos`}>
+        {title}
+      </label>
+      <input
+        id={`${prefix}-photos`}
+        name={`${prefix}-photos`}
+        type="file"
+        accept="image/jpeg,image/png"
+        multiple
+        onChange={(e) => select(e.target.files, e.target)}
+        className={photoFileCls}
+      />
+      <p className={hintCls}>{hint}</p>
+      {note && !error ? (
+        <p className="text-[11px] font-mono text-amber-300" role="status">
+          {note}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="text-[11px] font-mono text-amber-300" role="status">
+          {error}
+        </p>
+      ) : null}
+      {previews.length > 0 && (
+        <div className="grid grid-cols-4 gap-2">
+          {previews.map((src, i) => (
+            <div key={src} className="relative space-y-1">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={src} alt={`Pratinjau foto ${i + 1}`} className="w-full h-16 object-cover rounded-lg border border-white/10" />
+              <label className={`${labelCls} flex items-center gap-1`} htmlFor={`${prefix}-photo-caption-${i}`}>
+                Caption <span aria-hidden="true" className="text-rose-400">*</span>
+              </label>
+              <input
+                id={`${prefix}-photo-caption-${i}`}
+                name={`${prefix}-photo-caption-${i}`}
+                type="text"
+                maxLength={MAX_PHOTO_CAPTION_LENGTH}
+                autoComplete="off"
+                value={captions[i] ?? ''}
+                aria-required="true"
+                onChange={(e) => setCaption(i, e.target.value)}
+                placeholder="Di pasar…"
+                className={inputCls}
+              />
+              <button
+                type="button"
+                onClick={() => remove(i)}
+                aria-label={`Hapus foto ${i + 1}`}
+                className={photoRemoveCls}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const durationFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
 
 type Errors = Record<string, string>;
@@ -116,9 +250,11 @@ export default function NewBatchPage() {
   const [coolerLab, setCoolerLab] = useState('');
   const [deviationAck, setDeviationAck] = useState(false);
   // Foto kondisi awal (diunggah setelah batch dibuat)
-  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
-  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
-  const [photoCaptions, setPhotoCaptions] = useState<string[]>([]);
+  const [batchPhotos, setBatchPhotos] = useState<PhotoGroup>(emptyPhotoGroup);
+  const [groupPhotos, setGroupPhotos] = useState<{ sr: PhotoGroup; sd: PhotoGroup }>({
+    sr: emptyPhotoGroup(),
+    sd: emptyPhotoGroup(),
+  });
   const [createdBatchId, setCreatedBatchId] = useState<string | null>(null);
   // Tahap C — grup SR/SD
   const [groupSR, setGroupSR] = useState<GroupForm>(emptyGroup());
@@ -387,37 +523,19 @@ export default function NewBatchPage() {
     ) : null;
   const clsFor = (key: string) => (fieldErrors[key] ? inputErrCls : inputCls);
 
-  /** Pilih foto: tambah ke yang sudah ada (bukan mengganti). */
-  const handlePhotoSelect = (list: FileList | null, input: HTMLInputElement) => {
-    const incoming = Array.from(list ?? []);
-    const usable = incoming.filter((f) => /image\/(jpeg|png)/.test(f.type) && f.size > 0);
-    if (usable.length < incoming.length) {
-      setFieldErrors((prev) => ({ ...prev, photos: 'Hanya file JPG/PNG yang dipakai. File lain dilewati.' }));
+  /** Unggah satu paket foto; groupId opsional menautkan ke grup (butir 2). */
+  const uploadPhotosTo = async (batchId: string, photos: PhotoGroup, groupId?: string) => {
+    if (photos.files.length === 0) {
+      return;
     }
-    const fitting = usable.filter((f) => f.size <= 5 * 1024 * 1024);
-    if (fitting.length < usable.length) {
-      setFieldErrors((prev) => ({ ...prev, photos: 'Tiap foto maksimal 5 MB. File lebih besar dilewati.' }));
-    }
-    const accepted = fitting;
-    setPhotoFiles((prev) => [...prev, ...accepted]);
-    setPhotoPreviews((prev) => [...prev, ...accepted.map((f) => URL.createObjectURL(f))]);
-    setPhotoCaptions((prev) => [...prev, ...accepted.map(() => '')]);
-    input.value = '';
-  };
-
-  const removePhoto = (index: number) => {
-    URL.revokeObjectURL(photoPreviews[index]);
-    setPhotoFiles((prev) => prev.filter((_, i) => i !== index));
-    setPhotoPreviews((prev) => prev.filter((_, i) => i !== index));
-    setPhotoCaptions((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const uploadPhotos = async (batchId: string) => {
     const form = new FormData();
-    for (const f of photoFiles) {
+    for (const f of photos.files) {
       form.append('photos', f);
     }
-    form.append('captions', JSON.stringify(photoCaptions));
+    form.append('captions', JSON.stringify(photos.captions));
+    if (groupId) {
+      form.append('groupId', groupId);
+    }
     const res = await apiFetch(`/api/v1/batches/${encodeURIComponent(batchId)}/photos`, {
       method: 'POST',
       body: form,
@@ -443,11 +561,26 @@ export default function NewBatchPage() {
 
   const handleSubmit = async () => {
     const errs = { ...validateStepA(), ...validateStepC() };
-    const badCaption = photoFiles.length > 0
-      ? photoCaptions.findIndex((c) => c.trim() === '' || c.trim().length > MAX_PHOTO_CAPTION_LENGTH)
-      : -1;
-    if (badCaption >= 0) {
-      errs.photos = `Caption foto ke-${badCaption + 1} wajib diisi (maks ${MAX_PHOTO_CAPTION_LENGTH} karakter).`;
+    // Foto batch dan foto tiap grup sama-sama wajib ber-caption bila ada.
+    const captionError = (photos: PhotoGroup): string | null => {
+      const bad = photos.captions.findIndex(
+        (c) => c.trim() === '' || c.trim().length > MAX_PHOTO_CAPTION_LENGTH
+      );
+      return bad >= 0
+        ? `Caption foto ke-${bad + 1} wajib diisi (maks ${MAX_PHOTO_CAPTION_LENGTH} karakter).`
+        : null;
+    };
+    const captionBatch = captionError(batchPhotos);
+    if (captionBatch) {
+      errs.photos = captionBatch;
+    }
+    const captionsSr = captionError(groupPhotos.sr);
+    if (captionsSr) {
+      errs.groupPhotosSr = captionsSr;
+    }
+    const captionsSd = captionError(groupPhotos.sd);
+    if (captionsSd) {
+      errs.groupPhotosSd = captionsSd;
     }
     if (Object.keys(errs).length > 0) {
       setFieldErrors(errs);
@@ -492,9 +625,17 @@ export default function NewBatchPage() {
       await postJson(`/api/v1/batches/${encodeURIComponent(batch.batchId)}/groups`, {
         groups: [toGroup(groupSR, 'room_temp'), toGroup(groupSD, 'cold')],
       });
-      if (photoFiles.length > 0) {
+      // Unggah foto batch lalu foto tiap grup (butir 2); kegagalan foto tidak
+      // membatalkan batch yang sudah tersimpan.
+      if (
+        batchPhotos.files.length > 0 ||
+        groupPhotos.sr.files.length > 0 ||
+        groupPhotos.sd.files.length > 0
+      ) {
         try {
-          await uploadPhotos(batch.batchId);
+          await uploadPhotosTo(batch.batchId, batchPhotos);
+          await uploadPhotosTo(batch.batchId, groupPhotos.sr, `${batch.batchId}-SR`);
+          await uploadPhotosTo(batch.batchId, groupPhotos.sd, `${batch.batchId}-SD`);
         } catch (photoErr) {
           setCreatedBatchId(batch.batchId);
           throw new Error(
@@ -768,6 +909,13 @@ export default function NewBatchPage() {
             )}
           </div>
         </div>
+        <PhotosBlock
+          prefix={prefix}
+          title="Foto dokumentasi grup"
+          hint="JPG/PNG sampai 5 MB. Tiap foto wajib ber-caption, mis. udang di chamber, udang di kulkas."
+          error={fieldErrors[`groupPhotos${prefix.toUpperCase()}`]}
+          onChange={(p) => setGroupPhotos((prev) => ({ ...prev, [prefix]: p }))}
+        />
       </fieldset>
     );
   };
@@ -1035,59 +1183,13 @@ export default function NewBatchPage() {
             }, { placeholder: '3.8…', hint: 'Catat lagi saat tiba di lab, sebelum observasi.' })}
           </div>
           <p className={hintCls}>Cool box dijaga 0–4 °C dengan rasio es:udang 2:1 di kedua titik ukur.</p>
-          <div className={fieldCls}>
-            <label className={labelCls} htmlFor="photos">
-              Foto kondisi awal
-            </label>
-            <input
-              id="photos"
-              name="photos"
-              type="file"
-              accept="image/jpeg,image/png"
-              multiple
-              onChange={(e) => handlePhotoSelect(e.target.files, e.target)}
-              className="text-xs font-mono text-white/60 file:mr-2 file:px-3 file:py-1.5 file:rounded-lg file:bg-white/10 file:border file:border-white/10 file:text-white/80 file:text-xs file:font-mono"
-            />
-            <p className={hintCls}>JPG/PNG sampai 5 MB (bisa tambah bertahap, tanpa batas jumlah). Tiap foto wajib ber-caption (mis. di pasar, sebelum chamber). Minimal 1 foto sebelum batch dikunci.</p>
-            {fieldErrors.photos && (
-              <p className="text-[11px] font-mono text-amber-300" role="status">
-                {fieldErrors.photos}
-              </p>
-            )}
-            {photoPreviews.length > 0 && (
-              <div className="grid grid-cols-4 gap-2">
-                {photoPreviews.map((src, i) => (
-                  <div key={src} className="relative space-y-1">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={src} alt={`Pratinjau foto ${i + 1}`} className="w-full h-16 object-cover rounded-lg border border-white/10" />
-                    <label className={`${labelCls} flex items-center gap-1`} htmlFor={`photo-caption-${i}`}>
-                      Caption <span aria-hidden="true" className="text-rose-400">*</span>
-                    </label>
-                    <input
-                      id={`photo-caption-${i}`}
-                      name={`photo-caption-${i}`}
-                      type="text"
-                      maxLength={MAX_PHOTO_CAPTION_LENGTH}
-                      autoComplete="off"
-                      value={photoCaptions[i] ?? ''}
-                      aria-required="true"
-                      onChange={(e) => setPhotoCaptions((prev) => prev.map((c, j) => (j === i ? e.target.value : c)))}
-                      placeholder="Di pasar…"
-                      className={inputCls}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removePhoto(i)}
-                      aria-label={`Hapus foto ${i + 1}`}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-rose-500/90 text-white text-[10px] font-bold leading-none hover:bg-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <PhotosBlock
+            prefix="batch"
+            title="Foto kondisi awal"
+            hint="JPG/PNG sampai 5 MB (bisa tambah bertahap, tanpa batas jumlah). Tiap foto wajib ber-caption (mis. di pasar, sebelum chamber). Minimal 1 foto sebelum batch dikunci."
+            error={fieldErrors.photos}
+            onChange={setBatchPhotos}
+          />
           <div className="flex gap-2">
             <button type="button" onClick={() => goToStep(0)} disabled={submitting} className={btnBack}>
               Kembali

@@ -35,12 +35,13 @@ export async function GET(
     const photos = await prisma.batchPhoto.findMany({
       where: { batchId },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-      select: { url: true, caption: true },
+      // Butir 2: groupId ikut agar UI bisa menautkan foto ke grupnya.
+      select: { url: true, caption: true, groupId: true },
     });
 
     return jsonResponse({
       ...serializeBatch(batch),
-      photos: photos.map((p) => ({ url: p.url, caption: p.caption })),
+      photos: photos.map((p) => ({ url: p.url, caption: p.caption, groupId: p.groupId })),
       sampleGroups: batch.sampleGroups.map((g) => ({
         ...serializeGroup(g),
         sessions: g.sessions.map(serializeSession),
