@@ -608,7 +608,7 @@ export default function NewBatchPage() {
         <div className="grid grid-cols-2 gap-3">
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-labTempC`}>
-              Suhu dalam udang saat tiba (°C)
+              Suhu udang sebelum observasi (°C)
               {reqMark}
             </label>
             <input
@@ -628,7 +628,7 @@ export default function NewBatchPage() {
             {fieldErrors[`${prefix}-labTempC`] ? (
               fieldMessage(`${prefix}-labTempC`)
             ) : (
-              <p className={hintCls}>Ukur dengan termometer tusuk saat udang tiba.</p>
+              <p className={hintCls}>Ukur dengan termometer tusuk tepat sebelum observasi grup ini dimulai.</p>
             )}
           </div>
           <div className={fieldCls}>

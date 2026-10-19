@@ -575,7 +575,7 @@ export default function BatchDetailPage() {
                   {g.groupId} • {g.storageCondition === 'cold' ? 'Suhu Dingin (4 ± 1 °C)' : 'Suhu Ruang (25 ± 2 °C)'}
                 </p>
                 <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3 mt-1.5">
-                  <DataPair label="Suhu dalam udang saat tiba (°C)" value={num(g.labTempC, ' °C')} />
+                  <DataPair label="Suhu udang sebelum observasi (°C)" value={num(g.labTempC, ' °C')} />
                   <DataPair label="Temuan visual udang" value={VISUAL_LABEL[g.visualCheck] ?? g.visualCheck} />
                   <DataPair label="Jumlah udang per sesi (ekor)" value={num(g.sampleShrimpCount)} />
                   <DataPair label="Berat sampel sebelum observasi (g)" value={num(g.labWeightBeforeG, ' g')} />
