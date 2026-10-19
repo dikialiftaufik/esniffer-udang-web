@@ -48,6 +48,7 @@ enum UserRole {
 enum CollectionSourceType {
   MARKET
   FARM
+  SUPERMARKET
 }
 
 enum InitialCondition {

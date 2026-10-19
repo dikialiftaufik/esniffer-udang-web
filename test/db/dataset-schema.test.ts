@@ -124,6 +124,14 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
     await prisma.collectionBatch.delete({ where: { batchId: 'BT-20990101-02' } });
   });
 
+  it('source_type SUPERMARKET tersimpan dan terbaca', async () => {
+    const batch = await prisma.collectionBatch.create({
+      data: batchData({ batchId: 'BT-20990101-07', sourceType: 'SUPERMARKET' as const }),
+    });
+    assert.strictEqual(batch.sourceType, 'SUPERMARKET');
+    await prisma.collectionBatch.delete({ where: { batchId: 'BT-20990101-07' } });
+  });
+
   it('duplikat batch_id ditolak (P2002)', async () => {
     await assert.rejects(prisma.collectionBatch.create({ data: batchData() }), (err: unknown) => {
       assert.strictEqual((err as { code?: string }).code, 'P2002');
