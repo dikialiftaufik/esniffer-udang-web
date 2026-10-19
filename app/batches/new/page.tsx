@@ -1,8 +1,14 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../components/auth/AuthProvider';
+import {
+  loadBatchDraft,
+  saveBatchDraft,
+  removeBatchDraft,
+  draftMeaningful,
+} from '../../../lib/batch-draft.ts';
 import {
   isProcurementWindow,
   isColdChainCompliant,
@@ -60,6 +66,24 @@ const emptyGroup = (): GroupForm => ({
   sampleShrimpCount: '4',
   coldStorageMode: 'chamber',
 });
+
+/** Bangun ulang form grup dari draf tersimpan; nilai tak dikenal diabaikan. */
+const groupFromDraft = (saved: unknown): GroupForm => {
+  const base = emptyGroup();
+  if (typeof saved !== 'object' || saved === null) {
+    return base;
+  }
+  const s = saved as Record<string, unknown>;
+  for (const k of ['labTempC', 'visualCheck', 'labWeightBeforeG', 'labWeightAfterG', 'sampleShrimpCount'] as const) {
+    if (typeof s[k] === 'string') {
+      base[k] = s[k];
+    }
+  }
+  if (s.coldStorageMode === 'chamber' || s.coldStorageMode === 'plain_fridge') {
+    base.coldStorageMode = s.coldStorageMode;
+  }
+  return base;
+};
 
 /** Paket foto siap unggah: berkas + caption per tujuan (butir 2). */
 interface PhotoGroup {
@@ -223,7 +247,15 @@ function parseWib(value: string): { date?: Date; error?: string } {
 export default function NewBatchPage() {
   const { user, isLoading, apiFetch } = useAuth();
   const router = useRouter();
-  const [step, setStep] = useState(0);
+  // Butir 13: muat draf sekali; nilai awal tiap field kembali dari sini.
+  const draft = useMemo(() => loadBatchDraft() ?? {}, []);
+  const [draftRestored, setDraftRestored] = useState(() => draftMeaningful(draft));
+  const skipDraftSave = useRef(false);
+  /** Nilai teks dari draf bila bentuknya cocok — draf rusak aman diabaikan. */
+  const str = (v: unknown, fallback: string): string => (typeof v === 'string' ? v : fallback);
+  const [step, setStep] = useState(() =>
+    typeof draft.step === 'number' && draft.step >= 0 && draft.step <= 2 ? draft.step : 0
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Errors>({});
@@ -234,21 +266,23 @@ export default function NewBatchPage() {
   // Butir 5: kedua waktu mulai terisi dari jam device (peramban) saat halaman
   // dibuka; tetap dapat diedit manual sebelum disimpan. Lazy initializer —
   // jam device bukan state eksternal yang perlu disinkronkan lewat effect.
-  const [procuredAt, setProcuredAt] = useState(() => toLocalInput(new Date()));
-  const [marketSource, setMarketSource] = useState('');
-  const [sourceType, setSourceType] = useState('market');
-  const [shrimpCount, setShrimpCount] = useState('12');
-  const [shrimpLengthCm, setShrimpLengthCm] = useState('');
-  const [totalWeightG, setTotalWeightG] = useState('');
-  const [initialCondition, setInitialCondition] = useState('dead');
-  const [initialTempC, setInitialTempC] = useState('');
+  const [procuredAt, setProcuredAt] = useState(() => str(draft.procuredAt, toLocalInput(new Date())));
+  const [marketSource, setMarketSource] = useState(() => str(draft.marketSource, ''));
+  const [sourceType, setSourceType] = useState(() => str(draft.sourceType, 'market'));
+  const [shrimpCount, setShrimpCount] = useState(() => str(draft.shrimpCount, '12'));
+  const [shrimpLengthCm, setShrimpLengthCm] = useState(() => str(draft.shrimpLengthCm, ''));
+  const [totalWeightG, setTotalWeightG] = useState(() => str(draft.totalWeightG, ''));
+  const [initialCondition, setInitialCondition] = useState(() => str(draft.initialCondition, 'dead'));
+  const [initialTempC, setInitialTempC] = useState(() => str(draft.initialTempC, ''));
   // Tahap A — pengadaan (termasuk cool box dan tiba, pindahan tahap B)
-  const [arrivedAt, setArrivedAt] = useState(() => toLocalInput(new Date()));
+  const [arrivedAt, setArrivedAt] = useState(() => str(draft.arrivedAt, toLocalInput(new Date())));
   // Butir 7: dua suhu cool box yang berbeda makna — saat di pasar (tercatat
   // lama diDB sebagai cooler_temp_min_c) dan saat di lab (cooler_temp_max_c).
-  const [coolerMarket, setCoolerMarket] = useState('');
-  const [coolerLab, setCoolerLab] = useState('');
-  const [deviationAck, setDeviationAck] = useState(false);
+  const [coolerMarket, setCoolerMarket] = useState(() => str(draft.coolerMarket, ''));
+  const [coolerLab, setCoolerLab] = useState(() => str(draft.coolerLab, ''));
+  const [deviationAck, setDeviationAck] = useState(() =>
+    typeof draft.deviationAck === 'boolean' ? draft.deviationAck : false
+  );
   // Foto kondisi awal (diunggah setelah batch dibuat)
   const [batchPhotos, setBatchPhotos] = useState<PhotoGroup>(emptyPhotoGroup);
   const [groupPhotos, setGroupPhotos] = useState<{ sr: PhotoGroup; sd: PhotoGroup }>({
@@ -256,9 +290,51 @@ export default function NewBatchPage() {
     sd: emptyPhotoGroup(),
   });
   const [createdBatchId, setCreatedBatchId] = useState<string | null>(null);
-  // Tahap C — grup SR/SD
-  const [groupSR, setGroupSR] = useState<GroupForm>(emptyGroup());
-  const [groupSD, setGroupSD] = useState<GroupForm>(emptyGroup());
+  // Tahap C — grup SR/SD (nilai awal dari draf bila ada)
+  const [groupSR, setGroupSR] = useState<GroupForm>(() => groupFromDraft(draft.groupSr));
+  const [groupSD, setGroupSD] = useState<GroupForm>(() => groupFromDraft(draft.groupSd));
+
+  // Butir 13: autosave draf pada tiap perubahan form (foto tidak ikut).
+  useEffect(() => {
+    if (skipDraftSave.current) {
+      // Baru saja buang draf: jangan langsung tulis ulang isinya.
+      skipDraftSave.current = false;
+      return;
+    }
+    saveBatchDraft({
+      step,
+      procuredAt,
+      arrivedAt,
+      marketSource,
+      sourceType,
+      shrimpCount,
+      shrimpLengthCm,
+      totalWeightG,
+      initialCondition,
+      initialTempC,
+      coolerMarket,
+      coolerLab,
+      deviationAck,
+      groupSr: groupSR,
+      groupSd: groupSD,
+    });
+  }, [
+    step,
+    procuredAt,
+    arrivedAt,
+    marketSource,
+    sourceType,
+    shrimpCount,
+    shrimpLengthCm,
+    totalWeightG,
+    initialCondition,
+    initialTempC,
+    coolerMarket,
+    coolerLab,
+    deviationAck,
+    groupSR,
+    groupSD,
+  ]);
 
   const setSR = (v: GroupForm) => {
     setGroupSR(v);
@@ -277,10 +353,33 @@ export default function NewBatchPage() {
    * bisa diuji tanpa mengetar satu per satu. Foto tidak diisi:
    * file asli tidak bisa dibuang-buang, jadi tetap dipilih manual.
    */
+  /** Butir 13: buang draf tersimpan dan kembalikan form ke nilai awal. */
+  const discardDraft = () => {
+    removeBatchDraft();
+    skipDraftSave.current = true;
+    setDraftRestored(false);
+    setStep(0);
+    setProcuredAt(toLocalInput(new Date()));
+    setArrivedAt(toLocalInput(new Date()));
+    setMarketSource('');
+    setSourceType('market');
+    setShrimpCount('12');
+    setShrimpLengthCm('');
+    setTotalWeightG('');
+    setInitialCondition('dead');
+    setInitialTempC('');
+    setCoolerMarket('');
+    setCoolerLab('');
+    setDeviationAck(false);
+    setGroupSR(emptyGroup());
+    setGroupSD(emptyGroup());
+    setFieldErrors({});
+    notify('Draf dibuang — form kembali kosong.');
+  };
+
   const fillTestData = () => {
     // Tanggal kalender WIB hari ini (UTC+7).
-    const wibDate = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
-    // Beli di pasar 07:20 (dalam jendela 06:00–08:00) → tiba kembali
+    const wibDate = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);    // Beli di pasar 07:20 (dalam jendela 06:00–08:00) → tiba kembali
     // di lab 07:55 (perjalanan 35 menit).
     const procured = `${wibDate}T07:20`;
 
@@ -644,6 +743,8 @@ export default function NewBatchPage() {
         }
       }
       router.push(`/batches/${encodeURIComponent(batch.batchId)}`);
+      // Batch tersimpan: draf tidak diperlukan lagi.
+      removeBatchDraft();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal menyimpan batch. Periksa isian lalu coba lagi.');
     } finally {
@@ -936,6 +1037,20 @@ export default function NewBatchPage() {
         <p className="text-[11px] font-mono text-white/50 mt-2">
           Tanda <span aria-hidden="true" className="text-rose-400">*</span> merah berarti wajib diisi.
         </p>
+        {draftRestored && (
+          <div className="mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-3 py-2">
+            <p className="text-[11px] font-mono text-cyan-100">
+              Draf isian sebelumnya dipulihkan otomatis. Foto tidak ikut tersimpan — pilih ulang bila perlu.
+            </p>
+            <button
+              type="button"
+              onClick={discardDraft}
+              className="shrink-0 self-start sm:self-auto px-3 py-1.5 rounded-lg border border-cyan-300/40 text-cyan-100 text-[11px] font-mono font-bold hover:bg-cyan-400/20"
+            >
+              Buang draf
+            </button>
+          </div>
+        )}
         {AUTO_FILL_ENABLED && (
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
             <button type="button" onClick={fillTestData} className={btnGhost}>
