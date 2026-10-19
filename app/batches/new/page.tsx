@@ -864,7 +864,7 @@ export default function NewBatchPage() {
             </span>
             {radioRow('sd-cold-mode', g.coldStorageMode, (v) =>
               set({ coldStorageMode: v as GroupForm['coldStorageMode'] }), [
-              ['chamber', 'Dalam chamber (sensor chamber)'],
+              ['chamber', 'Dalam chamber'],
               ['plain_fridge', 'Langsung di kulkas, tanpa chamber'],
             ])}
             <p className={hintCls}>

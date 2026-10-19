@@ -13,6 +13,30 @@ interface NotificationItem {
   sessionId: string | null;
 }
 
+// Symmetrical bell icon (Lucide-style) - 24x24 viewBox, centered
+const BellIcon = ({ className = '' }: { className?: string }) => (
+  <svg
+    className={`w-5 h-5 ${className}`}
+    fill="none"
+    stroke="currentColor"
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"
+    />
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M13.73 21a2 2 0 0 1-3.46 0"
+    />
+  </svg>
+);
+
 export default function NotificationBell() {
   const { user, apiFetch } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
@@ -193,25 +217,12 @@ export default function NotificationBell() {
           aria-expanded={isOpen}
           aria-haspopup="menu"
           aria-label={unreadCount > 0 ? `${unreadCount} notifikasi belum dibaca` : 'Notifikasi'}
-          className="relative min-h-[44px] min-w-[44px] p-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
+          className="relative min-h-[44px] min-w-[44px] p-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 flex items-center justify-center"
         >
-          <svg
-            className="w-6 h-6 text-white/90"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-            />
-          </svg>
+          <BellIcon className="text-white/90" />
           {unreadCount > 0 && (
             <span
-              className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-rose-500 text-[10px] font-mono font-bold text-white flex items-center justify-center animate-pulse"
+              className="absolute top-1 right-1 min-w-[18px] h-5 rounded-full bg-rose-500 text-[10px] font-mono font-bold text-white flex items-center justify-center px-1.5 animate-pulse"
               aria-hidden="true"
             >
               {unreadCount > 9 ? '9+' : unreadCount}
@@ -232,15 +243,16 @@ export default function NotificationBell() {
           >
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
               <h3 className="text-sm font-mono font-bold text-white">Notifikasi</h3>
-              {unreadCount > 0 && (
-                <button
-                  onClick={markAllRead}
-                  disabled={loading}
-                  className="text-[11px] font-mono text-emerald-300 hover:text-emerald-200 disabled:opacity-50"
-                >
-                  Tandai semua dibaca
-                </button>
-              )}
+              <button
+                onClick={markAllRead}
+                disabled={unreadCount === 0 || loading}
+                className="text-[11px] font-mono transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 rounded px-1.5"
+                style={{
+                  color: unreadCount > 0 ? '#6EE7B7' : '#6B7280',
+                }}
+              >
+                Tandai semua dibaca
+              </button>
             </div>
 
             {notifications.length === 0 && !loading ? (
