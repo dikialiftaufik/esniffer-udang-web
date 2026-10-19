@@ -14,12 +14,17 @@ import {
  * agar route tetap tipis.
  */
 
-export type ApiSourceType = 'market' | 'farm';
+export type ApiSourceType = 'market' | 'farm' | 'supermarket';
 export type ApiInitialCondition = 'dead' | 'alive';
 export type ApiVisualCheck = 'normal' | 'melanosis' | 'damaged' | 'mixed_species';
 
-const SOURCE_TO_DB = { market: 'MARKET', farm: 'FARM' } as const;
-const DB_TO_SOURCE: Record<string, ApiSourceType> = { MARKET: 'market', FARM: 'farm' };
+// Revisi putaran 2 butir 6: supermarket menjadi nilai enum source_type.
+const SOURCE_TO_DB = { market: 'MARKET', farm: 'FARM', supermarket: 'SUPERMARKET' } as const;
+const DB_TO_SOURCE: Record<string, ApiSourceType> = {
+  MARKET: 'market',
+  FARM: 'farm',
+  SUPERMARKET: 'supermarket',
+};
 
 const CONDITION_TO_DB = { dead: 'DEAD', alive: 'ALIVE' } as const;
 const DB_TO_CONDITION: Record<string, ApiInitialCondition> = {
@@ -46,12 +51,12 @@ const DB_TO_STORAGE: Record<string, StorageConditionCode> = {
   COLD: 'cold',
 };
 
-export function parseSourceType(val: unknown): 'MARKET' | 'FARM' {
+export function parseSourceType(val: unknown): 'MARKET' | 'FARM' | 'SUPERMARKET' {
   const normalized = val === undefined || val === null || val === '' ? 'market' : val;
-  if (normalized === 'market' || normalized === 'farm') {
+  if (normalized === 'market' || normalized === 'farm' || normalized === 'supermarket') {
     return SOURCE_TO_DB[normalized];
   }
-  throw validationError('Field "sourceType" harus "market" atau "farm"');
+  throw validationError('Field "sourceType" harus "market", "farm", atau "supermarket"');
 }
 
 export function parseInitialCondition(val: unknown): 'DEAD' | 'ALIVE' {

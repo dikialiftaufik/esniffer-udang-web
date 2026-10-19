@@ -118,6 +118,29 @@ describe('HTTP API v1: Dataset Batches, Groups, Sessions & Lock (Fase 3)', () =>
     batchId = body.data.batchId;
   });
 
+  it('1b. sourceType supermarket diterima dan diserialisasi lowercase (butir 6)', async () => {
+    const res = await createBatch(
+      new Request('http://localhost:3000/api/v1/batches', {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify(batchBody({ sourceType: 'supermarket' })),
+      })
+    );
+    assert.strictEqual(res.status, 201);
+    const body = await res.json();
+    assert.strictEqual(body.data.sourceType, 'supermarket');
+    await prisma.collectionBatch.delete({ where: { batchId: body.data.batchId } });
+
+    const bad = await createBatch(
+      new Request('http://localhost:3000/api/v1/batches', {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify(batchBody({ sourceType: 'toko' })),
+      })
+    );
+    assert.strictEqual(bad.status, 422);
+  });
+
   it('2. POST /batches menolak shrimpCount < 10 (422)', async () => {
     const res = await createBatch(
       new Request('http://localhost:3000/api/v1/batches', {
