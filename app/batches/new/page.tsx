@@ -68,6 +68,12 @@ const toNum = (v: string): number | null => {
   return Number.isFinite(n) ? n : NaN;
 };
 
+/** Format jam device ke nilai `datetime-local` (YYYY-MM-DDTHH:mm). */
+const toLocalInput = (d: Date): string => {
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
 function parseWib(value: string): { date?: Date; error?: string } {
   if (value.trim() === '') return { error: 'Wajib diisi.' };
   try {
@@ -88,7 +94,10 @@ export default function NewBatchPage() {
   const { message: notice, notify, dismiss } = useSuccessNotice();
 
   // Tahap A — pengadaan
-  const [procuredAt, setProcuredAt] = useState('');
+  // Butir 5: kedua waktu mulai terisi dari jam device (peramban) saat halaman
+  // dibuka; tetap dapat diedit manual sebelum disimpan. Lazy initializer —
+  // jam device bukan state eksternal yang perlu disinkronkan lewat effect.
+  const [procuredAt, setProcuredAt] = useState(() => toLocalInput(new Date()));
   const [marketSource, setMarketSource] = useState('');
   const [sourceType, setSourceType] = useState('market');
   const [shrimpCount, setShrimpCount] = useState('12');
@@ -97,7 +106,7 @@ export default function NewBatchPage() {
   const [initialCondition, setInitialCondition] = useState('dead');
   const [initialTempC, setInitialTempC] = useState('');
   // Tahap A — pengadaan (termasuk cool box dan tiba, pindahan tahap B)
-  const [arrivedAt, setArrivedAt] = useState('');
+  const [arrivedAt, setArrivedAt] = useState(() => toLocalInput(new Date()));
   const [coolerMin, setCoolerMin] = useState('');
   const [coolerMax, setCoolerMax] = useState('');
   const [deviationAck, setDeviationAck] = useState(false);
@@ -834,7 +843,7 @@ export default function NewBatchPage() {
             {fieldErrors.procuredAt ? (
               fieldMessage('procuredAt')
             ) : (
-              <p className={hintCls}>Wajib pagi 06:00–08:00 WIB, dan harus sebelum tanggal dan jam tiba. Tersimpan sebagai UTC.</p>
+              <p className={hintCls}>Diisi otomatis dari jam device ini — pastikan jam device benar dulu. Wajib pagi 06:00–08:00 WIB dan sebelum jam tiba.</p>
             )}
           </div>
           <div className={fieldCls}>
@@ -859,7 +868,7 @@ export default function NewBatchPage() {
             {fieldErrors.arrivedAt ? (
               fieldMessage('arrivedAt')
             ) : (
-              <p className={hintCls}>Tiba kembali di lab; tanggal dan jam beli harus sebelum ini.</p>
+              <p className={hintCls}>Diisi dari jam device ini; perbarui saat benar-benar tiba di lab. Jam beli harus sebelum ini.</p>
             )}
           </div>
           </div>
