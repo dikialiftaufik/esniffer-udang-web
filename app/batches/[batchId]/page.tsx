@@ -134,9 +134,7 @@ export default function BatchDetailPage() {
   const [warmup, setWarmup] = useState<Record<string, boolean>>({});
   const [cleaning, setCleaning] = useState<Record<string, boolean>>({});
   const [chSel, setChSel] = useState<Record<string, string>>({});
-  const [devSel, setDevSel] = useState<Record<string, string>>({});
   const [chambers, setChambers] = useState<Array<{ id: string; code: string; name: string }>>([]);
-  const [devices, setDevices] = useState<Array<{ id: string; mqttDeviceId: string; name: string }>>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [filePreviews, setFilePreviews] = useState<string[]>([]);
   const [fileCaptions, setFileCaptions] = useState<string[]>([]);
@@ -210,19 +208,6 @@ export default function BatchDetailPage() {
         }
       })
       .catch(() => {});
-    apiFetch('/api/v1/devices?limit=100')
-      .then(async (res) => {
-        if (!res.ok) return;
-        const json = await res.json();
-        if (Array.isArray(json.data)) {
-          setDevices(json.data.map((d: { id: string; mqttDeviceId?: string; name?: string }) => ({
-            id: d.id,
-            mqttDeviceId: d.mqttDeviceId || d.id,
-            name: d.name || d.mqttDeviceId || d.id,
-          })));
-        }
-      })
-      .catch(() => {});
   }, [user, apiFetch]);
 
   const callJson = async (url: string, payload: unknown) => {
@@ -273,8 +258,8 @@ export default function BatchDetailPage() {
       await callJson(`/api/v1/groups/${encodeURIComponent(g.groupId)}/sessions`, {
         timepointCode,
         warmupDone: true,
+        // Butir 4: device tak lagi dipilih manual — sesuai chamber yang dipilih.
         chamberId: chSel[g.groupId] || null,
-        deviceId: devSel[g.groupId] || null,
       });
       notify(`Sesi ${timepointCode} berhasil dimulai.`);
       refresh();
@@ -942,21 +927,6 @@ export default function BatchDetailPage() {
                     </option>
                   ))}
                 </select>
-                <select
-                  value={devSel[g.groupId] || ''}
-                  onChange={(e) => setDevSel({ ...devSel, [g.groupId]: e.target.value })}
-                  aria-label="Device sesi (opsional, wajib agar data tertaut)"
-                  className="px-3 py-2 rounded-xl bg-black/25 border border-white/10 text-xs font-mono text-white max-w-[180px]"
-                >
-                  <option value="" className="bg-slate-900">
-                    Device: —
-                  </option>
-                  {devices.map((d) => (
-                    <option key={d.id} value={d.id} className="bg-slate-900">
-                      {d.mqttDeviceId}
-                    </option>
-                  ))}
-                </select>
                 <label className="flex items-center gap-1.5 text-[11px] font-mono text-white/70 cursor-pointer">
                   <input
                     type="checkbox"
@@ -970,9 +940,9 @@ export default function BatchDetailPage() {
                   Start Sesi
                 </button>
                 <p className="w-full text-[11px] font-mono text-white/45">
-                  {chSel[g.groupId] || devSel[g.groupId]
-                    ? 'Chamber + device terisi: data sensor otomatis tertaut ke sesi.'
-                    : 'Chamber + device kosong: sesi ini tidak akan punya data sensor.'}
+                  {chSel[g.groupId]
+                    ? 'Chamber terisi: sensor chamber otomatis tertaut ke sesi.'
+                    : 'Chamber kosong: sesi ini tidak akan punya data sensor.'}
                 </p>
               </div>
             )}
