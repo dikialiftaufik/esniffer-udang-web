@@ -124,6 +124,54 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
     await prisma.collectionBatch.delete({ where: { batchId: 'BT-20990101-02' } });
   });
 
+  it('source_type SUPERMARKET tersimpan dan terbaca', async () => {
+    const batch = await prisma.collectionBatch.create({
+      data: batchData({ batchId: 'BT-20990101-07', sourceType: 'SUPERMARKET' as const }),
+    });
+    assert.strictEqual(batch.sourceType, 'SUPERMARKET');
+    await prisma.collectionBatch.delete({ where: { batchId: 'BT-20990101-07' } });
+  });
+
+  it('kelompok dingin PLAIN_FRIDGE tersimpan tanpa chamberId', async () => {
+    const group = await prisma.sampleGroup.create({
+      data: {
+        groupId: `${BATCH}-SD2`,
+        batchId: BATCH,
+        storageCondition: 'COLD',
+        coldStorageMode: 'PLAIN_FRIDGE',
+        targetTempC: 4.0,
+        labTempC: 3.5,
+        visualCheck: 'NORMAL',
+        labWeightBeforeG: 480.0,
+        labWeightAfterG: 476.0,
+        sampleShrimpCount: 4,
+      },
+    });
+    assert.strictEqual(group.coldStorageMode, 'PLAIN_FRIDGE');
+    assert.strictEqual(group.chamberId, null);
+    await prisma.sampleGroup.delete({ where: { groupId: `${BATCH}-SD2` } });
+  });
+
+  it('CHECK: PLAIN_FRIDGE dengan chamberId ditolak', async () => {
+    await assert.rejects(
+      prisma.sampleGroup.create({
+        data: {
+          groupId: `${BATCH}-SD4`,
+          batchId: BATCH,
+          chamberId,
+          storageCondition: 'COLD',
+          coldStorageMode: 'PLAIN_FRIDGE',
+          targetTempC: 4.0,
+          labTempC: 3.5,
+          visualCheck: 'NORMAL',
+          labWeightBeforeG: 480.0,
+          labWeightAfterG: 476.0,
+          sampleShrimpCount: 4,
+        },
+      })
+    );
+  });
+
   it('duplikat batch_id ditolak (P2002)', async () => {
     await assert.rejects(prisma.collectionBatch.create({ data: batchData() }), (err: unknown) => {
       assert.strictEqual((err as { code?: string }).code, 'P2002');
@@ -316,6 +364,8 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
         groupId: GROUP_SD,
         batchId: BATCH,
         storageCondition: 'COLD',
+        // Dingin tanpa chamber = plain fridge (revisi putaran 2 butir 1).
+        coldStorageMode: 'PLAIN_FRIDGE',
         targetTempC: 4.0,
         labTempC: 5.0,
         visualCheck: 'NORMAL',
@@ -327,5 +377,51 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
     const groups = await prisma.sampleGroup.findMany({ where: { batchId: BATCH } });
     assert.strictEqual(groups.length, 2);
     await assert.rejects(prisma.collectionBatch.delete({ where: { batchId: BATCH } }));
+  });
+
+  it('foto grup tersimpan dengan groupId dan terbaca via relasi', async () => {
+    const photo = await prisma.batchPhoto.create({
+      data: {
+        batchId: BATCH,
+        groupId: GROUP_SD,
+        url: `https://example.local/grup-${GROUP_SD}.jpg`,
+        caption: 'Udang grup dingin sebelum chamber',
+        sortOrder: 0,
+      },
+    });
+    assert.strictEqual(photo.groupId, GROUP_SD);
+    const withGroup = await prisma.batchPhoto.findUnique({
+      where: { id: photo.id },
+      include: { group: true },
+    });
+    assert.strictEqual(withGroup?.group?.groupId, GROUP_SD);
+    await prisma.batchPhoto.delete({ where: { id: photo.id } });
+  });
+
+  it('foto tanpa groupId tetap foto batch (NULL, perilaku lama)', async () => {
+    const photo = await prisma.batchPhoto.create({
+      data: {
+        batchId: BATCH,
+        url: `https://example.local/batch-${BATCH}.jpg`,
+        caption: 'Foto pengadaan',
+        sortOrder: 0,
+      },
+    });
+    assert.strictEqual(photo.groupId, null);
+    await prisma.batchPhoto.delete({ where: { id: photo.id } });
+  });
+
+  it('FK: foto dengan groupId yang tidak dikenal ditolak', async () => {
+    await assert.rejects(
+      prisma.batchPhoto.create({
+        data: {
+          batchId: BATCH,
+          groupId: 'GRP-TIDAK-ADA',
+          url: `https://example.local/fantasi-${BATCH}.jpg`,
+          caption: 'Tidak boleh tersimpan',
+          sortOrder: 0,
+        },
+      })
+    );
   });
 });

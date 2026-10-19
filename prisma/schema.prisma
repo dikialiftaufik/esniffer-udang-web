@@ -48,6 +48,7 @@ enum UserRole {
 enum CollectionSourceType {
   MARKET
   FARM
+  SUPERMARKET
 }
 
 enum InitialCondition {
@@ -58,6 +59,15 @@ enum InitialCondition {
 enum StorageCondition {
   ROOM_TEMP
   COLD
+}
+
+// Revisi putaran 2 butir 1: membedakan kelompok dingin dalam chamber vs
+// langsung di kulkas. Hanya bermakna untuk storage_condition = COLD; grup
+// ruang memakai default CHAMBER tanpa perubahan perilaku. CHECK lintas-field
+// (plain_fridge_no_chamber, cold_chamber_required) dijaga di migrasi SQL.
+enum ColdStorageMode {
+  CHAMBER
+  PLAIN_FRIDGE
 }
 
 enum VisualCheck {
@@ -211,6 +221,7 @@ model User {
   updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
   sessions         AuthSession[]
   collectionBatches CollectionBatch[] @relation("BatchOperator")
+  notifications    Notification[]
 
   @@map("users")
 }
@@ -243,8 +254,12 @@ model CollectionBatch {
   initialCondition  InitialCondition     @map("initial_condition")
   initialTempC      Decimal              @map("initial_temp_c") @db.Decimal(5, 2)
   arrivedAtUtc      DateTime             @map("arrived_at_utc") @db.Timestamptz(3)
-  coolerTempMinC    Decimal              @map("cooler_temp_min_c") @db.Decimal(5, 2)
-  coolerTempMaxC    Decimal              @map("cooler_temp_max_c") @db.Decimal(5, 2)
+  // Revisi putaran 2 butir 7: kolom di-rename jadi market/lab (dua titik
+  // pengukuran di pasar dan di lab). Nama field Prisma/Tetap sengaja belum
+  // berubah agar kontrak API & UI tetap stabil; pemetaan nama field ke
+  // label baru dikerjakan di fase lib/UI.
+  coolerTempMinC    Decimal              @map("cooler_temp_market_c") @db.Decimal(5, 2)
+  coolerTempMaxC    Decimal              @map("cooler_temp_lab_c") @db.Decimal(5, 2)
   iceToShrimpRatio  String               @default("2:1") @map("ice_to_shrimp_ratio") @db.VarChar(8)
   rejectionNotes    String?              @map("rejection_notes") @db.VarChar(500)
   operatorId        String               @map("operator_id") @db.Uuid
@@ -255,6 +270,7 @@ model CollectionBatch {
   sessions          MeasurementSession[]
   readings          SensorReading[]
   photos            BatchPhoto[]
+  notifications     Notification[]
 
   @@map("collection_batches")
 }
@@ -262,14 +278,20 @@ model CollectionBatch {
 model BatchPhoto {
   id        String          @id @default(uuid()) @db.Uuid
   batchId   String          @map("batch_id") @db.VarChar(16)
+  // Revisi putaran 2 butir 2: foto bisa menempel ke grup tertentu
+  // (foto dokumentasi per grup di step pengelompokan). NULL = foto batch
+  // (pengadaan). ON DELETE SET NULL: bila grup hilang, foto tetap milik batch.
+  groupId   String?         @map("group_id") @db.VarChar(24)
   url       String          @db.VarChar(500)
   caption   String          @db.VarChar(140)
   sortOrder Int             @map("sort_order")
   createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   batch     CollectionBatch @relation(fields: [batchId], references: [batchId], onDelete: Cascade)
+  group     SampleGroup?    @relation(fields: [groupId], references: [groupId], onDelete: SetNull)
 
   @@unique([batchId, url])
   @@index([batchId, sortOrder])
+  @@index([batchId, groupId])
   @@map("batch_photos")
 }
 
@@ -279,6 +301,7 @@ model SampleGroup {
   batchId           String           @map("batch_id") @db.VarChar(16)
   chamberId         String?          @map("chamber_id") @db.Uuid
   storageCondition  StorageCondition @map("storage_condition")
+  coldStorageMode   ColdStorageMode  @default(CHAMBER) @map("cold_storage_mode")
   targetTempC       Decimal          @map("target_temp_c") @db.Decimal(5, 2)
   labTempC          Decimal          @map("lab_temp_c") @db.Decimal(5, 2)
   visualCheck       VisualCheck      @map("visual_check")
@@ -289,6 +312,7 @@ model SampleGroup {
   batch             CollectionBatch  @relation(fields: [batchId], references: [batchId], onDelete: Restrict)
   chamber           Chamber?         @relation(fields: [chamberId], references: [id], onDelete: Restrict)
   sessions          MeasurementSession[]
+  photos            BatchPhoto[]
 
   @@unique([batchId, storageCondition])
   @@map("sample_groups")
@@ -319,6 +343,7 @@ model MeasurementSession {
   chamber       Chamber?        @relation(fields: [chamberId], references: [id], onDelete: Restrict)
   device        Device?         @relation(fields: [deviceId], references: [id], onDelete: Restrict)
   readings      SensorReading[]
+  notifications Notification[]
 
   @@unique([groupId, timepointCode])
   @@map("measurement_sessions")
@@ -348,4 +373,32 @@ model IngestOutcome {
   @@unique([mqttDeviceId, outcome, windowStart])
   @@index([windowStart])
   @@map("ingest_outcomes")
+}
+
+/**
+ * Revisi pembimbing putaran 2 butir 9: lonceng notifikasi di header.
+ * Idempotensi (satu notifikasi stabil per sesi) ditegakkan di DB lewat
+ * @@unique([sessionId, kind]): Postgres memperbolehkan duplikat ketika
+ * session_id NULL, jadi notifikasi tanpa sesi tetap boleh berulang —
+ * tanpa partial index manual dan tanpa cek aplikasi yang bisa balapan.
+ */
+model Notification {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  batchId   String?  @map("batch_id") @db.VarChar(16)
+  sessionId String?  @map("session_id") @db.VarChar(32)
+  // Nilai terkendali disimpan sebagai teks agar menambah jenis notifikasi
+  // tidak perlu migrasi enum (pola market_source).
+  kind      String   @db.VarChar(40)
+  message   String   @db.VarChar(200)
+  readAt    DateTime? @map("read_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  batch     CollectionBatch?  @relation(fields: [batchId], references: [batchId], onDelete: Cascade)
+  session   MeasurementSession? @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+
+  @@unique([sessionId, kind])
+  @@index([userId, createdAt])
+  @@map("notifications")
 }
