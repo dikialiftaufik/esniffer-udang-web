@@ -577,7 +577,7 @@ export default function BatchDetailPage() {
           <p className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
             Pengadaan
           </p>
-          <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3">
+          <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3">
             <DataPair label="Tanggal dan jam beli (WIB)" value={dtFmt.format(new Date(batch.procuredAtUtc))} />
             <DataPair label="Tanggal dan jam tiba di lab (WIB)" value={dtFmt.format(new Date(batch.arrivedAtUtc))} />
             <DataPair label="Durasi beli ke tiba" value={durationText(batch.procuredAtUtc, batch.arrivedAtUtc)} />
@@ -618,7 +618,7 @@ export default function BatchDetailPage() {
                     ? `Suhu Dingin, ${g.coldStorageMode === 'plain_fridge' ? 'langsung di kulkas' : 'chamber'} (4 ± 1 °C)`
                     : 'Suhu Ruang (25 ± 2 °C)'}
                 </p>
-                <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3 mt-1.5">
+                <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3 mt-1.5">
                   <DataPair label="Suhu udang sebelum observasi (°C)" value={num(g.labTempC, ' °C')} />
                   <DataPair label="Temuan visual udang" value={VISUAL_LABEL[g.visualCheck] ?? g.visualCheck} />
                   <DataPair label="Jumlah udang per sesi (ekor)" value={num(g.sampleShrimpCount)} />
@@ -695,7 +695,7 @@ export default function BatchDetailPage() {
       <div className={cardCls}>
         <h3 className="text-sm font-mono font-bold text-white tracking-widest">FOTO DOKUMENTASI ({batch.photos.length})</h3>
         {batch.photos.length > 0 && (
-          <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
             {batch.photos.map((p, i) => (
               <div key={p.url} className="relative space-y-1">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -761,6 +761,7 @@ export default function BatchDetailPage() {
               <input
                 type="file"
                 accept="image/jpeg,image/png"
+                capture="environment"
                 multiple
                 aria-label="Pilih file foto untuk diunggah"
                 onChange={(e) => handlePhotoSelect(e.target.files, e.currentTarget)}
@@ -777,7 +778,7 @@ export default function BatchDetailPage() {
             {files.length === 0 ? (
               <p className="text-[11px] font-mono text-white/50">Belum ada foto dipilih — pratinjau tampil di sini sebelum diunggah.</p>
             ) : (
-              <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                 {filePreviews.map((src, i) => (
                   <div key={src} className="relative space-y-1">
                     {/* eslint-disable-next-line @next/next/no-img-element */}

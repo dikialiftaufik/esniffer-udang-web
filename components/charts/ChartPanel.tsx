@@ -296,8 +296,8 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
         </div>
       </div>
 
-      {/* Chart Body */}
-      <div className="flex-1 w-full min-h-[220px]">
+      {/* Chart Body — layar sempit dapat sedikit tinggi ekstra agar tetap terbaca */}
+      <div className="flex-1 w-full min-h-[320px] sm:min-h-[220px]">
         {isLoading && mergedData.length === 0 ? (
           <div className="flex items-center justify-center h-full text-white/50 font-mono text-sm">
             <div className="flex items-center gap-2">

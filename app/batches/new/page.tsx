@@ -167,6 +167,7 @@ function PhotosBlock({
         name={`${prefix}-photos`}
         type="file"
         accept="image/jpeg,image/png"
+        capture="environment"
         multiple
         onChange={(e) => select(e.target.files, e.target)}
         className={photoFileCls}
@@ -183,7 +184,7 @@ function PhotosBlock({
         </p>
       ) : null}
       {previews.length > 0 && (
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
           {previews.map((src, i) => (
             <div key={src} className="relative space-y-1">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -933,7 +934,7 @@ export default function NewBatchPage() {
             )}
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-sampleShrimpCount`}>
               Jumlah udang per sesi (ekor)
@@ -1110,7 +1111,7 @@ export default function NewBatchPage() {
             goToStep(1);
           }}
         >
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className={fieldCls}>
             <label className={labelCls} htmlFor="procuredAt">
               Tanggal dan jam beli (WIB)
@@ -1219,9 +1220,11 @@ export default function NewBatchPage() {
               ['farm', 'Tambak'],
             ])}
           </div>
-          <button type="submit" className={btnPrimary}>
-            Lanjut ke Kondisi & dokumentasi
-          </button>
+          <div className="sticky bottom-3 z-10 rounded-2xl bg-slate-900/85 backdrop-blur-md border border-white/10 shadow-lg p-2">
+            <button type="submit" className={btnPrimary}>
+              Lanjut ke Kondisi & dokumentasi
+            </button>
+          </div>
         </form>
       )}
 
@@ -1245,7 +1248,7 @@ export default function NewBatchPage() {
             ])}
             <p className={hintCls}>Kondisi udang saat dibeli.</p>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className={fieldCls}>
               <label className={labelCls} htmlFor="shrimpCount">
                 Jumlah total udang (ekor)
@@ -1277,7 +1280,7 @@ export default function NewBatchPage() {
               hint: 'Dari bekas potongan kepala sampai ujung ekor (telson).',
             })}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {numberField('totalWeightG', 'Berat total udang (gram)', totalWeightG, (v) => {
               setTotalWeightG(v);
               revalidateLive(1, { totalWeightG: fieldErrors.totalWeightG });
@@ -1287,7 +1290,7 @@ export default function NewBatchPage() {
               revalidateLive(1, { initialTempC: fieldErrors.initialTempC });
             }, { placeholder: '8.2…', hint: 'Ukur dengan termometer tusuk saat udang tiba.' })}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {numberField('coolerMarket', 'Suhu cool box saat di pasar (°C)', coolerMarket, (v) => {
               setCoolerMarket(v);
               revalidateLive(1, { coolerMarket: fieldErrors.coolerMarket });
@@ -1305,7 +1308,7 @@ export default function NewBatchPage() {
             error={fieldErrors.photos}
             onChange={setBatchPhotos}
           />
-          <div className="flex gap-2">
+          <div className="sticky bottom-3 z-10 flex gap-2 p-2 rounded-2xl bg-slate-900/85 backdrop-blur-md border border-white/10 shadow-lg">
             <button type="button" onClick={() => goToStep(0)} disabled={submitting} className={btnBack}>
               Kembali
             </button>
@@ -1334,7 +1337,7 @@ export default function NewBatchPage() {
             groupSD,
             setSD
           )}
-          <div className="flex gap-2">
+          <div className="sticky bottom-3 z-10 flex gap-2 p-2 rounded-2xl bg-slate-900/85 backdrop-blur-md border border-white/10 shadow-lg">
             <button type="button" onClick={() => goToStep(1)} disabled={submitting} className={btnBack}>
               Kembali
             </button>
