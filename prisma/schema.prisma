@@ -221,6 +221,7 @@ model User {
   updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
   sessions         AuthSession[]
   collectionBatches CollectionBatch[] @relation("BatchOperator")
+  notifications    Notification[]
 
   @@map("users")
 }
@@ -269,6 +270,7 @@ model CollectionBatch {
   sessions          MeasurementSession[]
   readings          SensorReading[]
   photos            BatchPhoto[]
+  notifications     Notification[]
 
   @@map("collection_batches")
 }
@@ -341,6 +343,7 @@ model MeasurementSession {
   chamber       Chamber?        @relation(fields: [chamberId], references: [id], onDelete: Restrict)
   device        Device?         @relation(fields: [deviceId], references: [id], onDelete: Restrict)
   readings      SensorReading[]
+  notifications Notification[]
 
   @@unique([groupId, timepointCode])
   @@map("measurement_sessions")
@@ -370,4 +373,32 @@ model IngestOutcome {
   @@unique([mqttDeviceId, outcome, windowStart])
   @@index([windowStart])
   @@map("ingest_outcomes")
+}
+
+/**
+ * Revisi pembimbing putaran 2 butir 9: lonceng notifikasi di header.
+ * Idempotensi (satu notifikasi stabil per sesi) ditegakkan di DB lewat
+ * @@unique([sessionId, kind]): Postgres memperbolehkan duplikat ketika
+ * session_id NULL, jadi notifikasi tanpa sesi tetap boleh berulang —
+ * tanpa partial index manual dan tanpa cek aplikasi yang bisa balapan.
+ */
+model Notification {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  batchId   String?  @map("batch_id") @db.VarChar(16)
+  sessionId String?  @map("session_id") @db.VarChar(32)
+  // Nilai terkendali disimpan sebagai teks agar menambah jenis notifikasi
+  // tidak perlu migrasi enum (pola market_source).
+  kind      String   @db.VarChar(40)
+  message   String   @db.VarChar(200)
+  readAt    DateTime? @map("read_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  batch     CollectionBatch?  @relation(fields: [batchId], references: [batchId], onDelete: Cascade)
+  session   MeasurementSession? @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+
+  @@unique([sessionId, kind])
+  @@index([userId, createdAt])
+  @@map("notifications")
 }
