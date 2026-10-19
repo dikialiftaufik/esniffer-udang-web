@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { createWorkerHealthServer } from './health.ts';
+import { sweepStableSessions } from './stability.ts';
 import {
   resolveWorkerConfig,
   type ResolvedWorkerConfig,
@@ -52,6 +53,8 @@ export class WorkerDaemon {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectAttempt = 0;
   private permanentConnectionFailure = false;
+  private stabilityTimer: NodeJS.Timeout | null = null;
+  private stabilityInFlight = false;
 
   constructor(config: WorkerConfig = {}, storage?: PrismaTelemetryStorage) {
     this.config = resolveWorkerConfig(config);
@@ -73,6 +76,7 @@ export class WorkerDaemon {
     this.permanentConnectionFailure = false;
     this.reconnectAttempt = 0;
     this.setupSignalHandlers();
+    this.startStabilitySweeper();
 
     logger.info({
       service: 'worker',
@@ -437,6 +441,36 @@ export class WorkerDaemon {
     });
   }
 
+  /**
+   * Timer sweep kestabilan dwell (butir 9): per detik konfigurasi,
+   * sesi aktif dievaluasi. Guard reentransi karena sweep DB bisa
+   * melebihi interval saat database lambat.
+   */
+  private startStabilitySweeper(): void {
+    if (this.stabilityTimer) return;
+    this.stabilityTimer = setInterval(() => {
+      void this.runStabilitySweep();
+    }, this.config.stabilitySweepSeconds * 1000);
+    this.stabilityTimer.unref();
+  }
+
+  private async runStabilitySweep(): Promise<void> {
+    if (!this.isRunning || this.isStopping || this.stabilityInFlight) return;
+    this.stabilityInFlight = true;
+    try {
+      await sweepStableSessions();
+    } catch (err) {
+      logger.error({
+        service: 'worker',
+        operation: 'stability_sweep',
+        outcome: 'sweep_failed',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      this.stabilityInFlight = false;
+    }
+  }
+
   public async stop(closeDatabase = false): Promise<void> {
     if (!this.isRunning || this.isStopping) return;
 
@@ -450,6 +484,10 @@ export class WorkerDaemon {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.stabilityTimer) {
+      clearInterval(this.stabilityTimer);
+      this.stabilityTimer = null;
     }
 
     // Berhenti menerima pesan baru, tetapi terus proses seluruh antrean yang
