@@ -231,6 +231,32 @@ export function serializeGroup(g: DbGroup) {
 /** Status sesi di kontrak API: selalu lowercase (DB menyimpan UPPER_CASE). UI wajib bandingkan lowercase. */
 export type ApiSessionStatus = 'open' | 'complete' | 'incomplete' | 'locked';
 
+type DbNotification = {
+  id: string;
+  batchId: string | null;
+  sessionId: string | null;
+  kind: string;
+  message: string;
+  readAt: Date | null;
+  createdAt: Date;
+};
+
+/**
+ * Notifikasi milik user login (revisi putaran 2 butir 9). userId tidak ikut
+ * — pemilik implisit dari sesi auth — dan isi dibuat oleh worker, bukan API.
+ */
+export function serializeNotification(n: DbNotification) {
+  return {
+    id: n.id,
+    batchId: n.batchId,
+    sessionId: n.sessionId,
+    kind: n.kind,
+    message: n.message,
+    readAt: iso(n.readAt),
+    createdAt: n.createdAt.toISOString(),
+  };
+}
+
 export function toApiSessionStatus(db: string): ApiSessionStatus {
   const lowered = db.toLowerCase();
   if (lowered === 'open' || lowered === 'complete' || lowered === 'incomplete' || lowered === 'locked') {
