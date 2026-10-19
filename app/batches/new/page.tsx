@@ -925,6 +925,7 @@ export default function NewBatchPage() {
             </span>
             {radioRow('sourceType', sourceType, setSourceType, [
               ['market', 'Pasar'],
+              ['supermarket', 'Supermarket'],
               ['farm', 'Tambak'],
             ])}
           </div>

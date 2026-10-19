@@ -76,7 +76,7 @@ const dtFmt = new Intl.DateTimeFormat('id-ID', {
 /** Angka id-ID (koma desimal) — dipakai semua nilai numerik di section ini. */
 const numFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
 
-const SOURCE_LABEL: Record<string, string> = { market: 'Pasar', farm: 'Tambak' };
+const SOURCE_LABEL: Record<string, string> = { market: 'Pasar', supermarket: 'Supermarket', farm: 'Tambak' };
 const CONDITION_LABEL: Record<string, string> = { alive: 'Hidup saat dibeli', dead: 'Mati saat dibeli' };
 const VISUAL_LABEL: Record<string, string> = {
   normal: 'Normal',
