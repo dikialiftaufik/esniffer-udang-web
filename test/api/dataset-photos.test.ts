@@ -40,9 +40,13 @@ async function photoReq(
   batchId: string,
   cookie: string,
   files: Array<{ name: string; type: string; bytes: Uint8Array }>,
-  captions?: Array<string | null> | null
+  captions?: Array<string | null> | null,
+  groupId?: string
 ) {
   const body = photoForm(files, captions);
+  if (groupId !== undefined && groupId !== '') {
+    body.append('groupId', groupId);
+  }
   return uploadPhotos(
     new Request(`http://localhost:3000/api/v1/batches/${batchId}/photos`, {
       method: 'POST',
@@ -204,6 +208,38 @@ describe('HTTP API v1: Dataset Batch Photos Upload (Fase 4)', () => {
       { params: Promise.resolve({ batchId }) }
     );
     assert.strictEqual(res.status, 422);
+  });
+
+  it('4c. Upload dengan groupId menautkan foto ke grup; groupId lain-batch ditolak (butir 2)', async () => {
+    const mk = async (groupId: string) =>
+      photoReq(batchId, adminCookie, [JPG], ['Foto grup'], groupId);
+
+    // Buat grup SR untuk batch utama (belum ada grup sebelum test ini).
+    await createGroups(
+      new Request(`http://localhost:3000/api/v1/batches/${batchId}/groups`, {
+        method: 'POST',
+        headers: { ...authHeaders(adminCookie), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          groups: [{
+            storageCondition: 'room_temp',
+            labTempC: 6.5,
+            visualCheck: 'normal',
+            labWeightBeforeG: 482,
+            labWeightAfterG: 478.5,
+            sampleShrimpCount: 4,
+          }],
+        }),
+      }),
+      { params: Promise.resolve({ batchId }) }
+    );
+
+    const res = await mk(`${batchId}-SR`);
+    assert.strictEqual(res.status, 201);
+    const photos = (await res.json()).data.photos as Array<{ groupId: string | null }>;
+    assert.strictEqual(photos[photos.length - 1].groupId, `${batchId}-SR`);
+
+    // Grup milik batch lain tidak boleh dipakai menyulap tautan.
+    assert.strictEqual((await mk(`${batchNoPhoto}-SR`)).status, 404);
   });
 
   it('5. Batch tidak ada 404, batch terkunci 409', async () => {
