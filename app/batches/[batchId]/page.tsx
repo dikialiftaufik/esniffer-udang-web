@@ -144,6 +144,14 @@ export default function BatchDetailPage() {
   const [savingCaption, setSavingCaption] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [confirmPhoto, setConfirmPhoto] = useState<{ message: string; photoUrl: string } | null>(null);
+  // Butir 3: edit parsial data grup di halaman detail (PATCH /groups/[id]).
+  const [editGroupId, setEditGroupId] = useState<string | null>(null);
+  const [groupDraft, setGroupDraft] = useState<{
+    labTempC: string;
+    labWeightBeforeG: string;
+    labWeightAfterG: string;
+  } | null>(null);
+  const [savingGroup, setSavingGroup] = useState(false);
   const { message: notice, notify, dismiss } = useSuccessNotice();
 
   useEffect(() => {
@@ -432,6 +440,52 @@ export default function BatchDetailPage() {
     }
   };
 
+  /** Butir 3: buka form edit data grup di halaman detail. */
+  const startGroupEdit = (g: GroupItem) => {
+    setEditGroupId(g.groupId);
+    setGroupDraft({
+      labTempC: g.labTempC === null ? '' : String(g.labTempC),
+      labWeightBeforeG: g.labWeightBeforeG === null ? '' : String(g.labWeightBeforeG),
+      labWeightAfterG: g.labWeightAfterG === null ? '' : String(g.labWeightAfterG),
+    });
+  };
+
+  const saveGroupEdit = async (g: GroupItem) => {
+    if (!groupDraft) {
+      return;
+    }
+    for (const v of [groupDraft.labTempC, groupDraft.labWeightBeforeG, groupDraft.labWeightAfterG]) {
+      if (v.trim() === '' || !Number.isFinite(Number(v))) {
+        notify('Ketiga nilai harus angka yang sah — periksa kembali.');
+        return;
+      }
+    }
+    setSavingGroup(true);
+    try {
+      const res = await apiFetch(`/api/v1/groups/${encodeURIComponent(g.groupId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          labTempC: Number(groupDraft.labTempC),
+          labWeightBeforeG: Number(groupDraft.labWeightBeforeG),
+          labWeightAfterG: Number(groupDraft.labWeightAfterG),
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error?.message || `Gagal menyimpan grup (kode ${res.status}).`);
+      }
+      setEditGroupId(null);
+      setGroupDraft(null);
+      notify('Data grup berhasil diperbarui.');
+      refresh();
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Gagal menyimpan grup.');
+    } finally {
+      setSavingGroup(false);
+    }
+  };
+
   if (isLoading || !user) {
     return (
       <div className="flex justify-center py-16">
@@ -586,6 +640,67 @@ export default function BatchDetailPage() {
                   <DataPair label="Berat sampel sebelum observasi (g)" value={num(g.labWeightBeforeG, ' g')} />
                   <DataPair label="Berat sampel sesudah observasi (g)" value={num(g.labWeightAfterG, ' g')} />
                 </dl>
+                {isAdmin && !locked && editGroupId !== g.groupId && (
+                  <button type="button" onClick={() => startGroupEdit(g)} className={btnGhost}>
+                    Edit data grup
+                  </button>
+                )}
+                {isAdmin && !locked && editGroupId === g.groupId && groupDraft && (
+                  <form
+                    noValidate
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void saveGroupEdit(g);
+                    }}
+                    className="border-t border-white/10 pt-3 space-y-2"
+                  >
+                    <p className="text-[11px] font-mono text-white/60">
+                      Field memakai aturan yang sama dengan wizard: suhu -2 sampai 30 °C, berat sampai 2000 g.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {(
+                        [
+                          ['labTempC', 'Suhu udang sebelum observasi (°C)', '6.5…'],
+                          ['labWeightBeforeG', 'Berat sampel sebelum observasi (g)', '482.0…'],
+                          ['labWeightAfterG', 'Berat sampel sesudah observasi (g)', '478.5…'],
+                        ] as const
+                      ).map(([key, label, placeholder]) => (
+                        <label key={key} className="flex flex-col gap-1">
+                          <span className="text-[11px] font-mono font-semibold text-white/80">{label}</span>
+                          <input
+                            type="number"
+                            step="0.1"
+                            inputMode="decimal"
+                            autoComplete="off"
+                            value={groupDraft[key]}
+                            aria-required="true"
+                            onChange={(e) =>
+                              setGroupDraft((prev) => (prev ? { ...prev, [key]: e.target.value } : prev))
+                            }
+                            placeholder={placeholder}
+                            className="w-full px-3 py-2 rounded-xl bg-black/25 border border-white/10 text-sm font-mono text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-400/60"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="submit" disabled={savingGroup} className={btnPrimary}>
+                        Simpan perubahan
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditGroupId(null);
+                          setGroupDraft(null);
+                        }}
+                        disabled={savingGroup}
+                        className={btnGhost}
+                      >
+                        Batal
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
             ))}
           </div>
