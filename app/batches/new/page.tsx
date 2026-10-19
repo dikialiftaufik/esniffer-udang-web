@@ -226,7 +226,7 @@ export default function NewBatchPage() {
     } else if (t < -2 || t > 30) {
       e.initialTempC = 'Harus -2 sampai 30 °C.';
     }
-    // Tiba di lab + cool box (pindahan tahap B): cukup beli dan tiba.
+    // Tiba di lab: beli harus sebelum tiba; durasi menentukan aturan deviasi.
     const arr = parseWib(arrivedAt);
     if (arr.error) {
       e.arrivedAt = arr.error;
@@ -237,6 +237,36 @@ export default function NewBatchPage() {
       } else if (!proc.error && !isColdChainCompliant(proc.date!, arr.date!) && !deviationAck) {
         e.arrivedAt = 'Melebihi 3 jam — centang deviasi di bawah untuk lanjut.';
       }
+    }
+    return e;
+  };
+
+  // Tahap B — kondisi udang, cool box, dan foto dokumentasi (butir 12).
+  const validateStepB = (): Errors => {
+    const e: Errors = {};
+    const count = toNum(shrimpCount);
+    if (count === null) {
+      e.shrimpCount = 'Wajib diisi.';
+    } else if (!Number.isInteger(count) || count < 10) {
+      e.shrimpCount = 'Minimal 10 ekor (bilangan bulat).';
+    }
+    const len = toNum(shrimpLengthCm);
+    if (len === null) {
+      e.shrimpLengthCm = 'Wajib diisi.';
+    } else if (!(len >= 1 && len <= 50)) {
+      e.shrimpLengthCm = 'Harus 1 sampai 50 cm.';
+    }
+    const w = toNum(totalWeightG);
+    if (w === null) {
+      e.totalWeightG = 'Wajib diisi.';
+    } else if (!(w > 0) || w > 2000) {
+      e.totalWeightG = 'Harus lebih dari 0 sampai 2000 gram.';
+    }
+    const t = toNum(initialTempC);
+    if (t === null) {
+      e.initialTempC = 'Wajib diisi.';
+    } else if (t < -2 || t > 30) {
+      e.initialTempC = 'Harus -2 sampai 30 °C.';
     }
     const cmin = toNum(coolerMin);
     if (cmin === null) {
@@ -290,7 +320,7 @@ export default function NewBatchPage() {
     ...validateGroup('sd', groupSD),
   });
 
-  const validators = [validateStepA, validateStepC];
+  const validators = [validateStepA, validateStepB, validateStepC];
 
   const focusFirstError = (errs: Errors) => {
     const first = Object.keys(errs)[0];
@@ -406,9 +436,11 @@ export default function NewBatchPage() {
     if (Object.keys(errs).length > 0) {
       setFieldErrors(errs);
       const stepOf = (k: string) =>
-        ['procuredAt', 'marketSource', 'shrimpCount', 'shrimpLengthCm', 'totalWeightG', 'initialTempC', 'photos', 'arrivedAt', 'coolerMin', 'coolerMax'].includes(k)
+        ['procuredAt', 'marketSource', 'arrivedAt'].includes(k)
           ? 0
-          : 1;
+          : ['shrimpCount', 'shrimpLengthCm', 'totalWeightG', 'initialTempC', 'coolerMin', 'coolerMax', 'photos'].includes(k)
+            ? 1
+            : 2;
       setStep(stepOf(Object.keys(errs)[0]));
       focusFirstError(errs);
       return;
@@ -467,7 +499,7 @@ export default function NewBatchPage() {
     );
   }
 
-  const steps = ['Pengadaan', 'Pengelompokan'];
+  const steps = ['Pengadaan', 'Kondisi & dokumentasi', 'Pengelompokan'];
 
   const radioRow = (
     name: string,
@@ -710,7 +742,7 @@ export default function NewBatchPage() {
         <h2 className="text-xl md:text-2xl font-mono font-black text-white tracking-wide text-balance">Batch baru</h2>
         <p className="text-xs font-mono text-white/60 mt-1">ID batch dan grup dibuat otomatis oleh server.</p>
         <p className="text-xs font-mono text-white/60 mt-1" aria-live="polite">
-          Langkah {step + 1} dari 2
+          Langkah {step + 1} dari 3
         </p>
         <div className="mt-2 flex gap-1.5" aria-hidden="true">
           {steps.map((_, i) => (
@@ -726,7 +758,7 @@ export default function NewBatchPage() {
               Isi otomatis (data tes)
             </button>
             <span className="text-[11px] font-mono text-white/40">
-              Uji cepat: mengisi pengadaan dan pengelompokan dengan nilai realistis; foto tetap dipilih manual.
+              Uji cepat: mengisi ketiga langkah dengan nilai realistis; foto tetap dipilih manual.
             </span>
           </div>
         )}
@@ -852,7 +884,7 @@ export default function NewBatchPage() {
           )}
           <div className={fieldCls}>
             <label className={labelCls} htmlFor="marketSource">
-              Sumber pasar
+              Sumber
               {reqMark}
             </label>
             <input
@@ -868,17 +900,16 @@ export default function NewBatchPage() {
                 setMarketSource(e.target.value);
                 revalidateLive(0, { marketSource: fieldErrors.marketSource });
               }}
-              placeholder="Pasar Ciroyom…"
+              placeholder="Pasar Ciroyom, Supermarket X…"
               className={clsFor('marketSource')}
             />
             {fieldErrors.marketSource ? (
               fieldMessage('marketSource')
             ) : (
-              <p className={hintCls}>Tulis bebas nama pasar tempat membeli.</p>
+              <p className={hintCls}>Nama lokasi pembelian, misal: Pasar Induk Kramat Jati, Supermarket X.</p>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className={fieldCls}>
+          <div className={fieldCls}>
             <span className={labelCls}>
               Jenis sumber
               {reqMark}
@@ -888,6 +919,21 @@ export default function NewBatchPage() {
               ['farm', 'Tambak'],
             ])}
           </div>
+          <button type="submit" className={btnPrimary}>
+            Lanjut ke Kondisi & dokumentasi
+          </button>
+        </form>
+      )}
+
+      {step === 1 && (
+        <form
+          className={cardCls}
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault();
+            goToStep(2);
+          }}
+        >
           <div className={fieldCls}>
             <span className={labelCls}>
               Kondisi awal udang
@@ -898,7 +944,6 @@ export default function NewBatchPage() {
               ['alive', 'Hidup saat dibeli'],
             ])}
             <p className={hintCls}>Kondisi udang saat dibeli.</p>
-          </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className={fieldCls}>
@@ -918,7 +963,7 @@ export default function NewBatchPage() {
                 aria-invalid={!!fieldErrors.shrimpCount}
                 onChange={(e) => {
                   setShrimpCount(e.target.value);
-                  revalidateLive(0, { shrimpCount: fieldErrors.shrimpCount });
+                  revalidateLive(1, { shrimpCount: fieldErrors.shrimpCount });
                 }}
                 className={clsFor('shrimpCount')}
               />
@@ -935,21 +980,21 @@ export default function NewBatchPage() {
           <div className="grid grid-cols-2 gap-3">
             {numberField('totalWeightG', 'Berat total udang (gram)', totalWeightG, (v) => {
               setTotalWeightG(v);
-              revalidateLive(0, { totalWeightG: fieldErrors.totalWeightG });
+              revalidateLive(1, { totalWeightG: fieldErrors.totalWeightG });
             }, { placeholder: '485.5…', hint: 'Timbang seluruh udang sekaligus.' })}
             {numberField('initialTempC', 'Suhu awal udang (°C)', initialTempC, (v) => {
               changeInitialTempC(v);
-              revalidateLive(0, { initialTempC: fieldErrors.initialTempC });
-            }, { placeholder: '8.2…', hint: 'Ukur dengan termometer tusuk.' })}
+              revalidateLive(1, { initialTempC: fieldErrors.initialTempC });
+            }, { placeholder: '8.2…', hint: 'Ukur dengan termometer tusuk saat udang tiba.' })}
           </div>
           <div className="grid grid-cols-2 gap-3">
             {numberField('coolerMin', 'Suhu cool box min (°C)', coolerMin, (v) => {
               setCoolerMin(v);
-              revalidateLive(0, { coolerMin: fieldErrors.coolerMin });
+              revalidateLive(1, { coolerMin: fieldErrors.coolerMin });
             }, { placeholder: '1.2…' })}
             {numberField('coolerMax', 'Suhu cool box max (°C)', coolerMax, (v) => {
               setCoolerMax(v);
-              revalidateLive(0, { coolerMax: fieldErrors.coolerMax });
+              revalidateLive(1, { coolerMax: fieldErrors.coolerMax });
             }, { placeholder: '3.8…' })}
           </div>
           <p className={hintCls}>Jaga 0–4 °C dengan rasio es:udang 2:1.</p>
@@ -1006,13 +1051,18 @@ export default function NewBatchPage() {
               </div>
             )}
           </div>
-          <button type="submit" className={btnPrimary}>
-            Lanjut ke Pengelompokan
-          </button>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => goToStep(0)} disabled={submitting} className={btnBack}>
+              Kembali
+            </button>
+            <button type="submit" className={`${btnPrimary} flex-[2]`}>
+              Lanjut ke Pengelompokan
+            </button>
+          </div>
         </form>
       )}
 
-      {step === 1 && (
+      {step === 2 && (
         <div className="flex flex-col gap-4">
           {groupCard(
             'sr',
@@ -1031,7 +1081,7 @@ export default function NewBatchPage() {
             setSD
           )}
           <div className="flex gap-2">
-            <button type="button" onClick={() => goToStep(0)} disabled={submitting} className={btnBack}>
+            <button type="button" onClick={() => goToStep(1)} disabled={submitting} className={btnBack}>
               Kembali
             </button>
             <button
