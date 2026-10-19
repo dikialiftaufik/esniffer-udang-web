@@ -44,7 +44,11 @@ export default function Header() {
         if (res.ok) {
           const json = await res.json();
           if (isMounted && Array.isArray(json.data)) {
-            setChambers(json.data);
+            // Filter out debug/test chambers (code starting with DBG/dbg)
+            const filtered = json.data.filter(
+              (c: ChamberItem) => !/^dbg/i.test(c.code)
+            );
+            setChambers(filtered);
           }
         }
       } catch {
