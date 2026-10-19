@@ -61,6 +61,15 @@ enum StorageCondition {
   COLD
 }
 
+// Revisi putaran 2 butir 1: membedakan kelompok dingin dalam chamber vs
+// langsung di kulkas. Hanya bermakna untuk storage_condition = COLD; grup
+// ruang memakai default CHAMBER tanpa perubahan perilaku. CHECK lintas-field
+// (plain_fridge_no_chamber, cold_chamber_required) dijaga di migrasi SQL.
+enum ColdStorageMode {
+  CHAMBER
+  PLAIN_FRIDGE
+}
+
 enum VisualCheck {
   NORMAL
   MELANOSIS
@@ -280,6 +289,7 @@ model SampleGroup {
   batchId           String           @map("batch_id") @db.VarChar(16)
   chamberId         String?          @map("chamber_id") @db.Uuid
   storageCondition  StorageCondition @map("storage_condition")
+  coldStorageMode   ColdStorageMode  @default(CHAMBER) @map("cold_storage_mode")
   targetTempC       Decimal          @map("target_temp_c") @db.Decimal(5, 2)
   labTempC          Decimal          @map("lab_temp_c") @db.Decimal(5, 2)
   visualCheck       VisualCheck      @map("visual_check")

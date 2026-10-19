@@ -132,6 +132,46 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
     await prisma.collectionBatch.delete({ where: { batchId: 'BT-20990101-07' } });
   });
 
+  it('kelompok dingin PLAIN_FRIDGE tersimpan tanpa chamberId', async () => {
+    const group = await prisma.sampleGroup.create({
+      data: {
+        groupId: `${BATCH}-SD2`,
+        batchId: BATCH,
+        storageCondition: 'COLD',
+        coldStorageMode: 'PLAIN_FRIDGE',
+        targetTempC: 4.0,
+        labTempC: 3.5,
+        visualCheck: 'NORMAL',
+        labWeightBeforeG: 480.0,
+        labWeightAfterG: 476.0,
+        sampleShrimpCount: 4,
+      },
+    });
+    assert.strictEqual(group.coldStorageMode, 'PLAIN_FRIDGE');
+    assert.strictEqual(group.chamberId, null);
+    await prisma.sampleGroup.delete({ where: { groupId: `${BATCH}-SD2` } });
+  });
+
+  it('CHECK: PLAIN_FRIDGE dengan chamberId ditolak', async () => {
+    await assert.rejects(
+      prisma.sampleGroup.create({
+        data: {
+          groupId: `${BATCH}-SD4`,
+          batchId: BATCH,
+          chamberId,
+          storageCondition: 'COLD',
+          coldStorageMode: 'PLAIN_FRIDGE',
+          targetTempC: 4.0,
+          labTempC: 3.5,
+          visualCheck: 'NORMAL',
+          labWeightBeforeG: 480.0,
+          labWeightAfterG: 476.0,
+          sampleShrimpCount: 4,
+        },
+      })
+    );
+  });
+
   it('duplikat batch_id ditolak (P2002)', async () => {
     await assert.rejects(prisma.collectionBatch.create({ data: batchData() }), (err: unknown) => {
       assert.strictEqual((err as { code?: string }).code, 'P2002');
@@ -324,6 +364,8 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
         groupId: GROUP_SD,
         batchId: BATCH,
         storageCondition: 'COLD',
+        // Dingin tanpa chamber = plain fridge (revisi putaran 2 butir 1).
+        coldStorageMode: 'PLAIN_FRIDGE',
         targetTempC: 4.0,
         labTempC: 5.0,
         visualCheck: 'NORMAL',
