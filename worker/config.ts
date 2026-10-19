@@ -12,6 +12,7 @@ export interface WorkerConfig {
   reconnectMaxMs?: number;
   healthHost?: string;
   healthPort?: number | null;
+  stabilitySweepSeconds?: number;
 }
 
 export interface ResolvedWorkerConfig {
@@ -28,6 +29,7 @@ export interface ResolvedWorkerConfig {
   reconnectMaxMs: number;
   healthHost: string;
   healthPort: number | null;
+  stabilitySweepSeconds: number;
 }
 
 function positiveInteger(value: number | string | undefined, fallback: number, name: string): number {
@@ -129,5 +131,12 @@ export function resolveWorkerConfig(
     reconnectMaxMs,
     healthHost: configured(config.healthHost) ?? configured(env.WORKER_HEALTH_HOST) ?? (production ? '0.0.0.0' : '127.0.0.1'),
     healthPort: optionalPort(config.healthPort ?? env.WORKER_HEALTH_PORT, production ? 8081 : null),
+    // Notifikasi kestabilan (butir 9): sweep per menit yang dieskalasi
+    // melalui WORKER_STABILITY_SWEEP_SECONDS bila perlu dipercepat.
+    stabilitySweepSeconds: positiveInteger(
+      config.stabilitySweepSeconds ?? env.WORKER_STABILITY_SWEEP_SECONDS,
+      60,
+      'WORKER_STABILITY_SWEEP_SECONDS'
+    ),
   };
 }
