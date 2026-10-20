@@ -22,6 +22,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
   const rangeParam = searchParams.get('range') || '1h';
 
   const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<{ bytes: number; totalRows: number | null } | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
   // History modal state
@@ -42,20 +43,28 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
   // Jendela waktu dibekukan saat modal dibuka; halaman lanjutan wajib memakai
   // from/to yang identik atau kursor ditolak server (filter hash mismatch).
   const windowRef = useRef<{ from: string; to: string } | null>(null);
+  const [activeWindow, setActiveWindow] = useState<{ from: string; to: string } | null>(null);
 
-  // Butir 10: tabel riwayat punya filter rentang sendiri — preset atau kustom
-  // WIB (datetime-local memakai jam device). Berbeda dari range grafik URL.
-  const [historyMode, setHistoryMode] = useState<'24h' | '7d' | '30d' | 'custom'>('24h');
+  // Filter jarak waktu tabel riwayat & ekspor (1h, 6h, 12h, 24h, 7d, 30d, kustom)
+  type HistoryRangeMode = '1h' | '6h' | '12h' | '24h' | '7d' | '30d' | 'custom';
+  const [historyMode, setHistoryMode] = useState<HistoryRangeMode>('24h');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
 
   const getHistoryBounds = (
-    mode: '24h' | '7d' | '30d' | 'custom' = historyMode,
+    mode: HistoryRangeMode = historyMode,
     fromRaw = customFrom,
     toRaw = customTo
   ): { from: string; to: string } | null => {
     const now = new Date();
-    const hours = mode === '24h' ? 24 : mode === '7d' ? 24 * 7 : mode === '30d' ? 24 * 30 : 0;
+    let hours = 0;
+    if (mode === '1h') hours = 1;
+    else if (mode === '6h') hours = 6;
+    else if (mode === '12h') hours = 12;
+    else if (mode === '24h') hours = 24;
+    else if (mode === '7d') hours = 24 * 7;
+    else if (mode === '30d') hours = 24 * 30;
+
     if (hours === 0) {
       if (!fromRaw || !toRaw) return null;
       const from = new Date(fromRaw);
@@ -66,23 +75,55 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
     return { from: new Date(now.getTime() - hours * 3_600_000).toISOString(), to: now.toISOString() };
   };
 
+  const formatRangeLabel = (
+    mode: HistoryRangeMode,
+    bounds?: { from: string; to: string } | null
+  ): string => {
+    if (mode === '1h') return '1 jam terakhir';
+    if (mode === '6h') return '6 jam terakhir';
+    if (mode === '12h') return '12 jam terakhir';
+    if (mode === '24h') return '24 jam terakhir';
+    if (mode === '7d') return '7 hari terakhir';
+    if (mode === '30d') return '30 hari terakhir';
+    if (bounds?.from && bounds?.to) {
+      const f = new Date(bounds.from);
+      const t = new Date(bounds.to);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${f.getDate()}/${f.getMonth() + 1} ${pad(f.getHours())}:${pad(f.getMinutes())} → ${t.getDate()}/${t.getMonth() + 1} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
+    }
+    return 'kustom';
+  };
+
   /** Ganti rentang tabel riwayat dan muat ulang halaman 1. */
-  const applyHistoryRange = (mode: '24h' | '7d' | '30d' | 'custom', from = '', to = '') => {
+  const applyHistoryRange = (mode: HistoryRangeMode, from = '', to = '') => {
+    let f = from;
+    let t = to;
     if (mode === 'custom') {
-      const f = from || customFrom;
-      const t = to || customTo;
+      f = from || customFrom;
+      t = to || customTo;
+      if (!f || !t) {
+        const now = new Date();
+        const sixHoursAgo = new Date(now.getTime() - 6 * 3600 * 1000);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const fmt = (d: Date) =>
+          `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        f = f || fmt(sixHoursAgo);
+        t = t || fmt(now);
+      }
       setCustomFrom(f);
       setCustomTo(t);
-      if (!getHistoryBounds('custom', f, t)) {
-        setHistoryError('Isi kedua tanggal dan jam kustom; "dari" harus sebelum "tujuan".');
-        return;
-      }
+    }
+    const bounds = getHistoryBounds(mode, f, t);
+    if (!bounds) {
+      setHistoryError('Isi kedua tanggal dan jam kustom; "dari" harus sebelum "tujuan".');
+      return;
     }
     setHistoryMode(mode);
     setHistoryError(null);
     cursorStackRef.current = [null];
-    windowRef.current = null;
-    void fetchHistoryPage(null, 1, true);
+    windowRef.current = bounds;
+    setActiveWindow(bounds);
+    void fetchHistoryPage(null, 1, true, bounds);
   };
 
   const getRangeBounds = () => {
@@ -101,6 +142,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
   const handleExportCsv = async (customBounds?: { from: string; to: string } | null, label?: string) => {
     setIsExporting(true);
     setExportError(null);
+    setExportProgress(null);
 
     const bounds = customBounds || getRangeBounds();
     if (!bounds) {
@@ -121,7 +163,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
         const errJson = await res.json().catch(() => ({}));
         const msg =
           errJson?.error?.message ||
-          'Rentang waktu menghasilkan lebih dari 50.000 baris (PAYLOAD_TOO_LARGE). Silakan persempit rentang waktu ekspor.';
+          'Rentang waktu menghasilkan data melebihi batas maksimum 200.000 baris (PAYLOAD_TOO_LARGE). Silakan persempit rentang waktu ekspor (misal: 1 jam, 6 jam, atau 12 jam).';
         setExportError(msg);
         return;
       }
@@ -133,8 +175,32 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
         return;
       }
 
+      const totalHeader = res.headers.get('x-total-count');
+      const totalRows = totalHeader ? parseInt(totalHeader, 10) : null;
+
+      let blob: Blob;
+      const reader = res.body?.getReader();
+      if (reader) {
+        const chunks: BlobPart[] = [];
+        let receivedBytes = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            receivedBytes += value.length;
+            setExportProgress({
+              bytes: receivedBytes,
+              totalRows,
+            });
+          }
+        }
+        blob = new Blob(chunks, { type: 'text/csv; charset=utf-8' });
+      } else {
+        blob = await res.blob();
+      }
+
       // Download file directly
-      const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -149,21 +215,28 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
       setExportError(msg);
     } finally {
       setIsExporting(false);
+      setExportProgress(null);
     }
   };
 
-  const fetchHistoryPage = async (cursorToken?: string | null, page = 1, resetWindow = false) => {
+  const fetchHistoryPage = async (
+    cursorToken?: string | null,
+    page = 1,
+    resetWindow = false,
+    boundsOverride?: { from: string; to: string } | null
+  ) => {
     setIsHistoryLoading(true);
     setHistoryError(null);
 
     if (resetWindow || !windowRef.current) {
-      const bounds = getHistoryBounds();
+      const bounds = boundsOverride || getHistoryBounds();
       if (!bounds) {
         setHistoryError('Rentang kustom belum lengkap atau urutannya salah.');
         setIsHistoryLoading(false);
         return;
       }
       windowRef.current = bounds;
+      setActiveWindow(bounds);
     }
     const { from, to } = windowRef.current;
     const query = new URLSearchParams({
@@ -210,6 +283,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
     historyPageRef.current = 1;
     cursorStackRef.current = [null];
     windowRef.current = null;
+    setActiveWindow(null);
     fetchHistoryPage(null, 1, true);
   };
 
@@ -302,7 +376,11 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                 </svg>
-                <span>Menyiapkan CSV...</span>
+                <span>
+                  {exportProgress
+                    ? `Mengunduh... (${(exportProgress.bytes / 1024).toFixed(0)} KB)`
+                    : 'Menyiapkan CSV...'}
+                </span>
               </>
             ) : (
               <>
@@ -351,7 +429,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
             role="dialog"
             aria-modal="true"
             aria-label={`Riwayat telemetri ${resolvedChamberId}`}
-            className="bg-slate-900 border border-white/15 rounded-3xl max-w-5xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+            className="bg-slate-900 border border-white/15 rounded-3xl max-w-5xl w-full max-h-[88vh] flex flex-col shadow-2xl overflow-hidden"
           >
             <div className="flex justify-between items-start gap-3 px-6 pt-5 pb-4 border-b border-white/10">
               <div className="min-w-0">
@@ -368,15 +446,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                   </h3>
                 </div>
                 <p className="mt-1.5 text-[11px] font-mono text-white/50">
-                  Rentang{' '}
-                  {historyMode === '24h'
-                    ? '24 jam terakhir'
-                    : historyMode === '7d'
-                      ? '7 hari terakhir'
-                      : historyMode === '30d'
-                        ? '30 hari terakhir'
-                        : 'kustom'}{' '}
-                  · 15 baris/halaman · Halaman {historyPage}
+                  Rentang {formatRangeLabel(historyMode, activeWindow)} · 15 baris/halaman · Halaman {historyPage}
                 </p>
               </div>
               <button
@@ -391,67 +461,145 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
               </button>
             </div>
 
-            <div className="px-6 pt-3">
-              {/* Butir 10: filter rentang tabel riwayat */}
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                {(['24h', '7d', '30d'] as const).map((mode) => (
+            <div className="px-6 pt-4 pb-1 border-b border-white/10 space-y-3">
+              {/* Pilihan Jarak Waktu Data */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-white/60">
+                    Pilih Jarak Waktu Data:
+                  </span>
+                  <span className="text-[10px] font-mono text-cyan-300">
+                    Aktif: {formatRangeLabel(historyMode, activeWindow)}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {(
+                    [
+                      { mode: '1h', label: '1 Jam' },
+                      { mode: '6h', label: '6 Jam' },
+                      { mode: '12h', label: '12 Jam' },
+                      { mode: '24h', label: '24 Jam' },
+                      { mode: '7d', label: '7 Hari' },
+                      { mode: '30d', label: '30 Hari' },
+                      { mode: 'custom', label: 'Kustom' },
+                    ] as const
+                  ).map((item) => (
+                    <button
+                      key={item.mode}
+                      type="button"
+                      onClick={() => applyHistoryRange(item.mode)}
+                      className={`px-3 py-1.5 rounded-xl border text-[11px] font-mono cursor-pointer touch-manipulation transition-all font-semibold ${
+                        item.mode === historyMode
+                          ? 'bg-cyan-500/25 border-cyan-400 text-white shadow-sm shadow-cyan-500/20'
+                          : 'bg-black/20 border-white/10 text-white/70 hover:border-white/25 hover:text-white'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Form Input Rentang Kustom */}
+              {historyMode === 'custom' && (
+                <div className="p-3 rounded-xl bg-black/30 border border-white/10 flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-mono text-white/60">Dari:</span>
+                    <input
+                      type="datetime-local"
+                      value={customFrom}
+                      onChange={(e) => setCustomFrom(e.target.value)}
+                      aria-label="Dari tanggal dan jam (kustom)"
+                      className="px-2.5 py-1.5 rounded-lg bg-black/40 border border-white/15 text-[11px] font-mono text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                  <span aria-hidden="true" className="text-white/40 text-[11px] font-mono">→</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-mono text-white/60">Sampai:</span>
+                    <input
+                      type="datetime-local"
+                      value={customTo}
+                      onChange={(e) => setCustomTo(e.target.value)}
+                      aria-label="Sampai tanggal dan jam (kustom)"
+                      className="px-2.5 py-1.5 rounded-lg bg-black/40 border border-white/15 text-[11px] font-mono text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
                   <button
-                    key={mode}
                     type="button"
-                    onClick={() => applyHistoryRange(mode)}
-                    className={`px-3 py-1.5 rounded-xl border text-[11px] font-mono cursor-pointer touch-manipulation transition-colors ${
-                      mode === historyMode
-                        ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-100'
-                        : 'bg-black/20 border-white/10 text-white/70 hover:border-white/25'
-                    }`}
+                    onClick={() => applyHistoryRange('custom', customFrom, customTo)}
+                    className="px-3 py-1.5 rounded-lg border border-cyan-400/50 bg-cyan-500/20 text-cyan-200 text-[11px] font-mono font-bold hover:bg-cyan-500/30 cursor-pointer ml-auto"
                   >
-                    {mode === '24h' ? '24 jam terakhir' : mode === '7d' ? '7 hari terakhir' : '30 hari terakhir'}
+                    Terapkan Rentang
                   </button>
-                ))}
-                <span className="text-[11px] font-mono text-white/50">Kustom (jam device):</span>
-                <input
-                  type="datetime-local"
-                  value={customFrom}
-                  onChange={(e) => setCustomFrom(e.target.value)}
-                  aria-label="Dari tanggal dan jam (kustom)"
-                  className="px-2 py-1.5 rounded-lg bg-black/25 border border-white/10 text-[11px] font-mono text-white max-w-[190px]"
-                />
-                <span aria-hidden="true" className="text-white/40 text-[11px] font-mono">→</span>
-                <input
-                  type="datetime-local"
-                  value={customTo}
-                  onChange={(e) => setCustomTo(e.target.value)}
-                  aria-label="Sampai tanggal dan jam (kustom)"
-                  className="px-2 py-1.5 rounded-lg bg-black/25 border border-white/10 text-[11px] font-mono text-white max-w-[190px]"
-                />
-                <button
-                  type="button"
-                  onClick={() => applyHistoryRange('custom', customFrom, customTo)}
-                  className="px-3 py-1.5 rounded-xl border border-cyan-400/40 bg-cyan-500/15 text-cyan-100 text-[11px] font-mono font-bold hover:bg-cyan-500/25 cursor-pointer"
-                >
-                  Terapkan kustom
-                </button>
+                </div>
+              )}
+
+              {/* Action Box: Download CSV for this specific range */}
+              <div className="p-3 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-slate-900/40 to-teal-950/40 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono font-bold text-emerald-200">
+                      Ekspor CSV Jarak Waktu Ini
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold">
+                      {formatRangeLabel(historyMode, activeWindow)}
+                    </span>
+                  </div>
+                  <p className="text-[10px] font-mono text-white/50 mt-0.5">
+                    {historyMode === '7d' || historyMode === '30d'
+                      ? '⚠️ Rentang panjang memiliki volume data besar. Unduh 1 - 24 jam untuk respon instan.'
+                      : 'Unduh file CSV hasil rekaman telemetri sesuai rentang waktu yang sedang dipilih.'}
+                  </p>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => {
-                    const bounds = getHistoryBounds();
+                    const bounds = activeWindow || getHistoryBounds();
                     if (!bounds) {
-                      setHistoryError('Rentang kustom belum lengkap atau urutannya salah.');
+                      setHistoryError('Rentang waktu belum valid untuk unduhan.');
                       return;
                     }
                     void handleExportCsv(bounds, historyMode);
                   }}
                   disabled={isExporting}
-                  className="px-3 py-1.5 rounded-xl border border-emerald-400/40 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-[11px] font-mono font-bold flex items-center gap-1.5 disabled:opacity-50 transition-colors cursor-pointer"
+                  className="px-4 py-2 rounded-xl border border-emerald-400/50 bg-gradient-to-r from-emerald-500/30 to-teal-500/30 hover:from-emerald-500/40 hover:to-teal-500/40 text-emerald-100 text-xs font-mono font-bold flex items-center gap-2 disabled:opacity-50 transition-all cursor-pointer shadow-md shadow-emerald-950/30 shrink-0"
                 >
-                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                  <span>{isExporting ? 'Menyiapkan...' : 'Unduh CSV rentang ini'}</span>
+                  {isExporting ? (
+                    <>
+                      <svg className="animate-spin h-3.5 w-3.5 text-emerald-300" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      <span>
+                        {exportProgress
+                          ? `Mengunduh... (${(exportProgress.bytes / 1024).toFixed(0)} KB)`
+                          : 'Menyiapkan CSV...'}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-4 w-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      <span>Unduh CSV Rentang Ini</span>
+                    </>
+                  )}
                 </button>
               </div>
+
+              {exportError && (
+                <div
+                  role="alert"
+                  className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-mono"
+                >
+                  <div className="font-bold">Gagal Mengunduh CSV:</div>
+                  <div>{exportError}</div>
+                </div>
+              )}
+
               {historyError && (
-                <div className="mb-3 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs font-mono">
+                <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs font-mono">
                   {historyError}
                 </div>
               )}
@@ -459,7 +607,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
               {aboveCount > 0 && (
                 <div
                   role="status"
-                  className="mb-3 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-200/90 text-[11px] font-mono"
+                  className="px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-200/90 text-[11px] font-mono"
                 >
                   {aboveCount} data terbaru sudah tampil di grafik dan ikut tabel berikutnya. Bukan data hilang.
                 </div>

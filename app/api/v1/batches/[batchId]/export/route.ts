@@ -6,7 +6,7 @@ import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, CSV_UTF8_BOM, buildC
 import { logger } from '../../../../../../lib/logging/logger.ts';
 import { Prisma } from '@prisma/client';
 
-const BATCH_SIZE = 1000;
+const BATCH_SIZE = 5000;
 
 const DB_TO_SOURCE: Record<string, string> = { MARKET: 'market', FARM: 'farm', SUPERMARKET: 'supermarket' };
 const DB_TO_STORAGE: Record<string, string> = { ROOM_TEMP: 'room_temp', COLD: 'cold' };

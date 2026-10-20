@@ -8,7 +8,7 @@ import { logger } from '../../../../../../lib/logging/logger.ts';
 import { Prisma } from '@prisma/client';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const BATCH_SIZE = 1000;
+const BATCH_SIZE = 5000;
 
 export async function GET(
   request: Request,
@@ -76,6 +76,12 @@ export async function GET(
       );
     }
 
+    // Pre-cache devices for instant lookup, eliminating secondary DB queries per chunk
+    const devices = await prisma.device.findMany({
+      select: { id: true, mqttDeviceId: true },
+    });
+    const deviceMap = new Map<string, string>(devices.map((d) => [d.id, d.mqttDeviceId]));
+
     // Set up safe streaming with pull-based backpressure and keyset traversal
     const encoder = new TextEncoder();
     const abortSignal = request.signal;
@@ -136,8 +142,24 @@ export async function GET(
               { receivedAt: 'asc' },
               { historySequence: 'asc' },
             ],
-            include: {
-              device: { select: { mqttDeviceId: true } },
+            select: {
+              deviceId: true,
+              messageId: true,
+              measuredAt: true,
+              receivedAt: true,
+              measurementTimeQuality: true,
+              temperatureC: true,
+              temperatureQuality: true,
+              humidityPercent: true,
+              humidityQuality: true,
+              mq137Raw: true,
+              mq137Quality: true,
+              mq136Raw: true,
+              mq136Quality: true,
+              mq4Raw: true,
+              mq4Quality: true,
+              ingestionSource: true,
+              historySequence: true,
             },
           });
 
@@ -151,7 +173,7 @@ export async function GET(
           for (const r of chunk) {
             const row = [
               chamber.code,
-              r.device.mqttDeviceId,
+              deviceMap.get(r.deviceId) || '',
               r.messageId,
               r.measuredAt ? r.measuredAt.toISOString() : '',
               r.receivedAt.toISOString(),
@@ -230,6 +252,7 @@ export async function GET(
         'Content-Disposition': `attachment; filename="${safeFilename}"`,
         'Cache-Control': 'no-store, private',
         'x-request-id': requestId,
+        'x-total-count': totalCount.toString(),
       },
     });
   } catch (err) {
