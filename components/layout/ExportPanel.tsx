@@ -30,7 +30,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [watermark, setWatermark] = useState<string | null>(null);
+  const [, setWatermark] = useState<string | null>(null);
   const [aboveCount, setAboveCount] = useState(0);
   const [historyPage, setHistoryPage] = useState(1);
   // Halaman keyset saat ini (ref: hanya penjaga refresh, tak dirender).
@@ -98,11 +98,17 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
     return { from: from.toISOString(), to: now.toISOString() };
   };
 
-  const handleExportCsv = async () => {
+  const handleExportCsv = async (customBounds?: { from: string; to: string } | null, label?: string) => {
     setIsExporting(true);
     setExportError(null);
 
-    const { from, to } = getRangeBounds();
+    const bounds = customBounds || getRangeBounds();
+    if (!bounds) {
+      setExportError('Rentang waktu belum valid untuk ekspor.');
+      setIsExporting(false);
+      return;
+    }
+    const { from, to } = bounds;
     const query = new URLSearchParams({ from, to });
     if (activeDeviceId) query.set('deviceId', activeDeviceId);
 
@@ -112,9 +118,11 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
       );
 
       if (res.status === 413) {
-        setExportError(
-          'Rentang waktu menghasilkan lebih dari 50.000 baris (PAYLOAD_TOO_LARGE). Silakan persempit rentang waktu ekspor.'
-        );
+        const errJson = await res.json().catch(() => ({}));
+        const msg =
+          errJson?.error?.message ||
+          'Rentang waktu menghasilkan lebih dari 50.000 baris (PAYLOAD_TOO_LARGE). Silakan persempit rentang waktu ekspor.';
+        setExportError(msg);
         return;
       }
 
@@ -130,7 +138,8 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `esniffer_${resolvedChamberId}_${rangeParam}.csv`;
+      const fileLabel = label || rangeParam;
+      a.download = `esniffer_${resolvedChamberId}_${fileLabel}.csv`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -283,7 +292,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
         <div className="flex flex-col gap-3">
           {/* CSV Export Button */}
           <button
-            onClick={handleExportCsv}
+            onClick={() => void handleExportCsv()}
             disabled={isExporting}
             className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500/30 to-teal-600/30 hover:from-emerald-500/40 hover:to-teal-600/40 border border-emerald-400/40 text-emerald-200 font-mono font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/20 transition-all disabled:opacity-50"
           >
@@ -418,9 +427,27 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                 <button
                   type="button"
                   onClick={() => applyHistoryRange('custom', customFrom, customTo)}
-                  className="px-3 py-1.5 rounded-xl border border-cyan-400/40 bg-cyan-500/15 text-cyan-100 text-[11px] font-mono font-bold hover:bg-cyan-500/25"
+                  className="px-3 py-1.5 rounded-xl border border-cyan-400/40 bg-cyan-500/15 text-cyan-100 text-[11px] font-mono font-bold hover:bg-cyan-500/25 cursor-pointer"
                 >
                   Terapkan kustom
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const bounds = getHistoryBounds();
+                    if (!bounds) {
+                      setHistoryError('Rentang kustom belum lengkap atau urutannya salah.');
+                      return;
+                    }
+                    void handleExportCsv(bounds, historyMode);
+                  }}
+                  disabled={isExporting}
+                  className="px-3 py-1.5 rounded-xl border border-emerald-400/40 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-[11px] font-mono font-bold flex items-center gap-1.5 disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  <span>{isExporting ? 'Menyiapkan...' : 'Unduh CSV rentang ini'}</span>
                 </button>
               </div>
               {historyError && (

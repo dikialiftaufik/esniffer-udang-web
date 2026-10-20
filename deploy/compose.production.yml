@@ -116,6 +116,7 @@ services:
       CURSOR_SIGNING_SECRET_FILE: /run/secrets/cursor_signing_secret
       APP_BASE_URL: ${APP_BASE_URL}
       APP_ORIGIN_ALLOWLIST: ${APP_ORIGIN_ALLOWLIST:-}
+      MAX_EXPORT_ROWS: ${MAX_EXPORT_ROWS:-200000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     secrets:
       - postgres_runtime_password

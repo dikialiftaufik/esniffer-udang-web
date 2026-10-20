@@ -5,7 +5,7 @@ import { GET as getSeriesHandler } from '../../app/api/v1/chambers/[chamberId]/s
 import { GET as getExportHandler } from '../../app/api/v1/chambers/[chamberId]/export/route.ts';
 import { hashPassword } from '../../lib/auth/password.ts';
 import { createSession, buildSessionCookie } from '../../lib/auth/session.ts';
-import { sanitizeCsvCell, buildCsvRow } from '../../lib/api/csv.ts';
+import { sanitizeCsvCell, buildCsvRow, getMaxExportRows, DEFAULT_MAX_EXPORT_ROWS } from '../../lib/api/csv.ts';
 import { randomUUID } from 'node:crypto';
 
 describe('HTTP API v1: Time-Bucket Series & Safe CSV Export Tests', () => {
@@ -501,4 +501,39 @@ describe('HTTP API v1: Time-Bucket Series & Safe CSV Export Tests', () => {
       'Timestamp hasil export harus kembali sebagai instant UTC yang sama'
     );
   });
+
+  it('10. Export CSV menolak jika jumlah baris melebihi MAX_EXPORT_ROWS (413 PAYLOAD_TOO_LARGE)', async () => {
+    assert.strictEqual(DEFAULT_MAX_EXPORT_ROWS, 200000);
+    const prevEnv = process.env.MAX_EXPORT_ROWS;
+    try {
+      delete process.env.MAX_EXPORT_ROWS;
+      assert.strictEqual(getMaxExportRows(), 200000);
+
+      // Set batas kecil untuk memicu 413 pada fixture data yang ada
+      process.env.MAX_EXPORT_ROWS = '2';
+      assert.strictEqual(getMaxExportRows(), 2);
+
+      const fromStr = new Date(testBaseTime.getTime() - 10000).toISOString();
+      const toStr = new Date(testBaseTime.getTime() + 10000).toISOString();
+
+      const req = new Request(
+        `http://localhost:3000/api/v1/chambers/${chamberCode}/export?from=${fromStr}&to=${toStr}`,
+        { method: 'GET', headers: { Cookie: adminCookie } }
+      );
+
+      const res = await getExportHandler(req, { params: Promise.resolve({ chamberId: chamberCode }) });
+      assert.strictEqual(res.status, 413);
+
+      const body = await res.json();
+      assert.strictEqual(body.error.code, 'PAYLOAD_TOO_LARGE');
+      assert.ok(body.error.message.includes('melebihi batas maksimum 2 baris (PAYLOAD_TOO_LARGE)'));
+    } finally {
+      if (prevEnv !== undefined) {
+        process.env.MAX_EXPORT_ROWS = prevEnv;
+      } else {
+        delete process.env.MAX_EXPORT_ROWS;
+      }
+    }
+  });
 });
+

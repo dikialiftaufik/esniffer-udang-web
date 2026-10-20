@@ -184,3 +184,19 @@ export const DATASET_METADATA_CSV_HEADERS = [
   'baseline_mq136',
   'baseline_mq4',
 ];
+
+/**
+ * Batas maksimum baris data per unduhan CSV (default: 200.000).
+ * Cukup untuk >24 jam pembacaan sensor berkelanjutan pada 1-2 Hz (~86.400 - 172.800 baris).
+ * Dapat di-override melalui environment variable MAX_EXPORT_ROWS.
+ */
+export const DEFAULT_MAX_EXPORT_ROWS = 200000;
+
+export function getMaxExportRows(): number {
+  const envVal = process.env.MAX_EXPORT_ROWS;
+  if (envVal && !Number.isNaN(Number(envVal)) && Number(envVal) > 0) {
+    return Number(envVal);
+  }
+  return DEFAULT_MAX_EXPORT_ROWS;
+}
+

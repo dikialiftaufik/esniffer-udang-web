@@ -3,12 +3,11 @@ import { requireAuth } from '../../../../../../lib/auth/guard.ts';
 import { errorResponse, getRequestId } from '../../../../../../lib/api/response.ts';
 import { parseIsoDate, validateTimeRange } from '../../../../../../lib/api/validation.ts';
 import { notFound, payloadTooLarge, validationError } from '../../../../../../lib/api/errors.ts';
-import { READING_CSV_HEADERS, CSV_UTF8_BOM, buildCsvRow } from '../../../../../../lib/api/csv.ts';
+import { READING_CSV_HEADERS, CSV_UTF8_BOM, buildCsvRow, getMaxExportRows } from '../../../../../../lib/api/csv.ts';
 import { logger } from '../../../../../../lib/logging/logger.ts';
 import { Prisma } from '@prisma/client';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MAX_EXPORT_ROWS = 50000;
 const BATCH_SIZE = 1000;
 
 export async function GET(
@@ -69,10 +68,11 @@ export async function GET(
     }
 
     // Safeguard: Check total rows before streaming using the frozen snapshot
+    const maxExportRows = getMaxExportRows();
     const totalCount = await prisma.sensorReading.count({ where: baseWhere });
-    if (totalCount > MAX_EXPORT_ROWS) {
+    if (totalCount > maxExportRows) {
       throw payloadTooLarge(
-        `Requested export contains ${totalCount} rows, which exceeds the maximum limit of ${MAX_EXPORT_ROWS} rows. Please narrow the date range.`
+        `Rentang waktu ekspor menghasilkan ${totalCount.toLocaleString('id-ID')} baris, melebihi batas maksimum ${maxExportRows.toLocaleString('id-ID')} baris (PAYLOAD_TOO_LARGE). Silakan persempit rentang waktu ekspor.`
       );
     }
 

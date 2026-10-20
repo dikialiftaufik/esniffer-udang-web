@@ -2,11 +2,10 @@ import { prisma } from '../../../../../../lib/db/client.ts';
 import { requireAuth } from '../../../../../../lib/auth/guard.ts';
 import { errorResponse, getRequestId } from '../../../../../../lib/api/response.ts';
 import { notFound, payloadTooLarge, validationError } from '../../../../../../lib/api/errors.ts';
-import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, CSV_UTF8_BOM, buildCsvRow, toWibParts } from '../../../../../../lib/api/csv.ts';
+import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, CSV_UTF8_BOM, buildCsvRow, toWibParts, getMaxExportRows } from '../../../../../../lib/api/csv.ts';
 import { logger } from '../../../../../../lib/logging/logger.ts';
 import { Prisma } from '@prisma/client';
 
-const MAX_EXPORT_ROWS = 50000;
 const BATCH_SIZE = 1000;
 
 const DB_TO_SOURCE: Record<string, string> = { MARKET: 'market', FARM: 'farm', SUPERMARKET: 'supermarket' };
@@ -156,10 +155,11 @@ export async function GET(
       throw validationError('Query param "isBaseline" must be "true" or "false"');
     }
 
+    const maxExportRows = getMaxExportRows();
     const totalCount = await prisma.sensorReading.count({ where: baseWhere });
-    if (totalCount > MAX_EXPORT_ROWS) {
+    if (totalCount > maxExportRows) {
       throw payloadTooLarge(
-        `Requested export contains ${totalCount} rows, which exceeds the maximum limit of ${MAX_EXPORT_ROWS} rows. Filter by session or timepoint.`
+        `Rentang ekspor batch menghasilkan ${totalCount.toLocaleString('id-ID')} baris, melebihi batas maksimum ${maxExportRows.toLocaleString('id-ID')} baris (PAYLOAD_TOO_LARGE). Filter berdasarkan sesi atau timepoint.`
       );
     }
 

@@ -268,6 +268,7 @@ describe('Real Browser Dashboard & Auth Integration (Puppeteer + Google Chrome)'
         APP_BASE_URL: BASE_URL,
         AUTH_SECRET: 'browser-test-auth-secret-key-32-chars-long',
         CURSOR_SIGNING_SECRET: 'browser-test-cursor-secret-key-32-chars',
+        MAX_EXPORT_ROWS: '50000',
       },
       stdio: 'pipe',
     });
