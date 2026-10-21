@@ -1,0 +1,76 @@
+# Sinkronisasi otomatis upstream -> fork.
+#
+# Upstream (repo kanonik) : https://github.com/rvansss/esniffer-udang-web
+# Fork     (repo kerja)    : https://github.com/dikialiftaufik/esniffer-udang-web
+#
+# Mekanisme: branch `main` di fork di-rebase di atas `upstream/main`, lalu
+# dipush dengan --force-with-lease. Commit milik fork (termasuk file workflow
+# ini) tidak hilang, hanya ditulis ulang di atas upstream. Kalau rebase
+# konflik, job gagal sebelum push sehingga fork tidak pernah rusak.
+#
+# Tidak memakai PAT: push memakai GITHUB_TOKEN bawaan repo, yang otomatis
+# terbatas pada repo ini dan tidak punya masa kedaluwarsa.
+
+name: Sync Upstream to Fork
+
+on:
+  workflow_dispatch:
+    inputs:
+      sync_branches:
+        description: "Sinkronkan juga seluruh branch upstream ke fork"
+        type: boolean
+        default: false
+  schedule:
+    # Tiap 6 jam pada menit 23 (menit acak agar tidak menumpuk dengan workflow lain)
+    - cron: "23 */6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sinkronkan main dan (opsional) branch lain
+    runs-on: ubuntu-latest
+    env:
+      UPSTREAM_URL: https://github.com/rvansss/esniffer-udang-web.git
+      GIT_COMMITTER_NAME: github-actions[bot]
+      GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fetch remote (upstream + seluruh branch fork)
+        run: |
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --all --prune
+
+      - name: Rebase main fork di atas upstream/main
+        run: |
+          git checkout main
+          git rebase upstream/main
+
+      - name: Push main ke fork
+        run: |
+          git push --force-with-lease origin main
+
+      - name: Sinkronkan branch lain (opsional)
+        if: ${{ inputs.sync_branches }}
+        continue-on-error: true
+        run: |
+          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/upstream/ | grep -v '^upstream/HEAD$'); do
+            branch="${ref#upstream/}"
+            echo "::group::sinkronkan $branch"
+            if git push --force-with-lease origin "refs/remotes/upstream/$branch:refs/heads/$branch"; then
+              echo "selaras dengan upstream"
+            else
+              echo "::warning::$branch dilewati: fork punya commit sendiri yang belum ada di upstream"
+            fi
+            echo "::endgroup::"
+          done
