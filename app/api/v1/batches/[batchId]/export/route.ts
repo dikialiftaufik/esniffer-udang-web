@@ -2,14 +2,12 @@ import { prisma } from '../../../../../../lib/db/client.ts';
 import { requireAuth } from '../../../../../../lib/auth/guard.ts';
 import { errorResponse, getRequestId } from '../../../../../../lib/api/response.ts';
 import { notFound, payloadTooLarge, validationError } from '../../../../../../lib/api/errors.ts';
+import { DB_TO_SOURCE, DB_TO_STORAGE, DB_TO_CONDITION, DB_TO_VISUAL } from '../../../../../../lib/api/dataset.ts';
 import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, CSV_UTF8_BOM, buildCsvRow, toWibParts, getMaxExportRows } from '../../../../../../lib/api/csv.ts';
 import { logger } from '../../../../../../lib/logging/logger.ts';
 import { Prisma } from '@prisma/client';
 
 const BATCH_SIZE = 5000;
-
-const DB_TO_SOURCE: Record<string, string> = { MARKET: 'market', FARM: 'farm', SUPERMARKET: 'supermarket' };
-const DB_TO_STORAGE: Record<string, string> = { ROOM_TEMP: 'room_temp', COLD: 'cold' };
 
 /**
  * Export CSV ML-ready per batch (VIEWER+): join metadata + readings.
@@ -64,7 +62,7 @@ export async function GET(
         full.sizeGrade,
         num(full.shrimpLengthCm),
         num(full.totalWeightG),
-        String(full.initialCondition).toLowerCase(),
+        DB_TO_CONDITION[full.initialCondition] ?? full.initialCondition.toLowerCase(),
         num(full.initialTempC),
         arrived.date,
         arrived.time,
@@ -86,7 +84,7 @@ export async function GET(
           DB_TO_STORAGE[g.storageCondition] ?? g.storageCondition,
           num(g.targetTempC),
           num(g.labTempC),
-          String(g.visualCheck).toLowerCase(),
+          DB_TO_VISUAL[g.visualCheck] ?? g.visualCheck.toLowerCase(),
           num(g.labWeightBeforeG),
           num(g.labWeightAfterG),
           g.sampleShrimpCount,

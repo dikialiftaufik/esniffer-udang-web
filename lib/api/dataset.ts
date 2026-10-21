@@ -20,14 +20,16 @@ export type ApiVisualCheck = 'normal' | 'melanosis' | 'damaged' | 'mixed_species
 
 // Revisi putaran 2 butir 6: supermarket menjadi nilai enum source_type.
 const SOURCE_TO_DB = { market: 'MARKET', farm: 'FARM', supermarket: 'SUPERMARKET' } as const;
-const DB_TO_SOURCE: Record<string, ApiSourceType> = {
+export const DB_TO_SOURCE: Record<string, ApiSourceType> = {
   MARKET: 'market',
   FARM: 'farm',
   SUPERMARKET: 'supermarket',
 };
 
 const CONDITION_TO_DB = { dead: 'DEAD', alive: 'ALIVE' } as const;
-const DB_TO_CONDITION: Record<string, ApiInitialCondition> = {
+// Peta DB → API diekspor agar konsumen lain (mis. ekspor CSV) tidak menyalin
+// peta lowercase sendiri dan istilah tetap satu sumber kebenaran.
+export const DB_TO_CONDITION: Record<string, ApiInitialCondition> = {
   DEAD: 'dead',
   ALIVE: 'alive',
 };
@@ -38,7 +40,7 @@ const VISUAL_TO_DB = {
   damaged: 'DAMAGED',
   mixed_species: 'MIXED_SPECIES',
 } as const;
-const DB_TO_VISUAL: Record<string, ApiVisualCheck> = {
+export const DB_TO_VISUAL: Record<string, ApiVisualCheck> = {
   NORMAL: 'normal',
   MELANOSIS: 'melanosis',
   DAMAGED: 'damaged',
@@ -46,7 +48,7 @@ const DB_TO_VISUAL: Record<string, ApiVisualCheck> = {
 };
 
 const STORAGE_TO_DB = { room_temp: 'ROOM_TEMP', cold: 'COLD' } as const;
-const DB_TO_STORAGE: Record<string, StorageConditionCode> = {
+export const DB_TO_STORAGE: Record<string, StorageConditionCode> = {
   ROOM_TEMP: 'room_temp',
   COLD: 'cold',
 };
