@@ -34,8 +34,8 @@ function batchData(overrides: Record<string, unknown> = {}) {
     initialCondition: 'DEAD' as const,
     initialTempC: 8.2,
     arrivedAtUtc: new Date('2099-01-01T02:00:00.000Z'),
-    coolerTempMinC: 1.2,
-    coolerTempMaxC: 3.8,
+    coolerTempMarketC: 1.2,
+    coolerTempLabC: 3.8,
     operatorId,
     ...overrides,
   };
@@ -248,7 +248,7 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
   it('CHECK: suhu cooler di luar 0–4 ditolak', async () => {
     await assert.rejects(
       prisma.collectionBatch.create({
-        data: batchData({ batchId: 'BT-20990101-05', coolerTempMaxC: 12.0 }),
+        data: batchData({ batchId: 'BT-20990101-05', coolerTempLabC: 12.0 }),
       })
     );
   });

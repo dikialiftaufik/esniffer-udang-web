@@ -707,8 +707,8 @@ export default function NewBatchPage() {
         initialCondition,
         initialTempC: Number(initialTempC),
         arrivedAtUtc: new Date(arrivedAt).toISOString(),
-        coolerTempMinC: Number(coolerMarket),
-        coolerTempMaxC: Number(coolerLab),
+        coolerTempMarketC: Number(coolerMarket),
+        coolerTempLabC: Number(coolerLab),
         deviationAcknowledged: deviationAck,
       });
       const toGroup = (g: GroupForm, storageCondition: 'room_temp' | 'cold') => ({

@@ -146,8 +146,8 @@ describe('sweepStableSessions (butir 9, lapisan worker)', () => {
         initialCondition: 'DEAD',
         initialTempC: 8.2,
         arrivedAtUtc: new Date('2099-10-19T02:00:00.000Z'),
-        coolerTempMinC: 1.2,
-        coolerTempMaxC: 3.8,
+        coolerTempMarketC: 1.2,
+        coolerTempLabC: 3.8,
         operatorId: userId,
       },
     });

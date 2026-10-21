@@ -163,8 +163,8 @@ type DbBatch = {
   initialCondition: string;
   initialTempC: { toNumber(): number };
   arrivedAtUtc: Date;
-  coolerTempMinC: { toNumber(): number };
-  coolerTempMaxC: { toNumber(): number };
+  coolerTempMarketC: { toNumber(): number };
+  coolerTempLabC: { toNumber(): number };
   iceToShrimpRatio: string;
   rejectionNotes: string | null;
   lockedAt: Date | null;
@@ -185,8 +185,13 @@ export function serializeBatch(b: DbBatch) {
     initialCondition: DB_TO_CONDITION[b.initialCondition] ?? b.initialCondition,
     initialTempC: dec(b.initialTempC),
     arrivedAtUtc: b.arrivedAtUtc.toISOString(),
-    coolerTempMinC: dec(b.coolerTempMinC),
-    coolerTempMaxC: dec(b.coolerTempMaxC),
+    coolerTempMarketC: dec(b.coolerTempMarketC),
+    coolerTempLabC: dec(b.coolerTempLabC),
+    // Alias deprecated (butir 7): konsumen JSON lama masih membaca nama
+    // min/max. Nilai sama persis dengan market/lab; hapus setelah kontrak
+    // lama benar-benar tidak dipakai.
+    coolerTempMinC: dec(b.coolerTempMarketC),
+    coolerTempMaxC: dec(b.coolerTempLabC),
     iceToShrimpRatio: b.iceToShrimpRatio,
     rejectionNotes: b.rejectionNotes,
     lockedAt: iso(b.lockedAt),

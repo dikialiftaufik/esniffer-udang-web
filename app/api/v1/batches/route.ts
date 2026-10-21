@@ -66,8 +66,20 @@ export async function POST(request: Request): Promise<Response> {
     const initialCondition = parseInitialCondition(body?.initialCondition);
     const initialTempC = parseBoundedNumber(body?.initialTempC, 'initialTempC', -2, 30);
     const arrivedAtUtc = parseIsoDate(body?.arrivedAtUtc, 'arrivedAtUtc', true)!;
-    const coolerTempMinC = parseBoundedNumber(body?.coolerTempMinC, 'coolerTempMinC', 0, 4);
-    const coolerTempMaxC = parseBoundedNumber(body?.coolerTempMaxC, 'coolerTempMaxC', 0, 4);
+    // Butir 7: dua titik pengukuran cool box. Nama baru (market/lab) adalah
+    // kanonik; nama lama (min/max) tetap diterima sebagai alias deprecated.
+    const coolerTempMarketC = parseBoundedNumber(
+      body?.coolerTempMarketC ?? body?.coolerTempMinC,
+      'coolerTempMarketC',
+      0,
+      4
+    );
+    const coolerTempLabC = parseBoundedNumber(
+      body?.coolerTempLabC ?? body?.coolerTempMaxC,
+      'coolerTempLabC',
+      0,
+      4
+    );
     const iceToShrimpRatio = body?.iceToShrimpRatio === undefined || body?.iceToShrimpRatio === ''
       ? '2:1'
       : parseRequiredString(body?.iceToShrimpRatio, 'iceToShrimpRatio', 3, 8);
@@ -105,8 +117,8 @@ export async function POST(request: Request): Promise<Response> {
             initialCondition,
             initialTempC,
             arrivedAtUtc,
-            coolerTempMinC,
-            coolerTempMaxC,
+            coolerTempMarketC,
+            coolerTempLabC,
             iceToShrimpRatio,
             rejectionNotes,
             operatorId: auth.user.id,

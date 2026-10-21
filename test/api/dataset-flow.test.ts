@@ -133,8 +133,8 @@ describe('Dataset Feature End-to-End Flow (Fase 8)', () => {
         initialCondition: 'dead',
         initialTempC: 8.2,
         arrivedAtUtc: `${DAY}T05:00:00.000Z`, // ~4h45m
-        coolerTempMinC: 1.2,
-        coolerTempMaxC: 3.8,
+        coolerTempMarketC: 1.2,
+        coolerTempLabC: 3.8,
       })
     );
     assert.strictEqual(res.status, 422);
@@ -152,8 +152,8 @@ describe('Dataset Feature End-to-End Flow (Fase 8)', () => {
         initialCondition: 'dead',
         initialTempC: 8.2,
         arrivedAtUtc: `${DAY}T02:00:00.000Z`,
-        coolerTempMinC: 1.2,
-        coolerTempMaxC: 3.8,
+        coolerTempMarketC: 1.2,
+        coolerTempLabC: 3.8,
       })
     );
     assert.strictEqual(batchRes.status, 201);

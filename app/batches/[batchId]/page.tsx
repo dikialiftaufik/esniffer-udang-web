@@ -48,8 +48,8 @@ interface BatchDetail {
   sizeGrade: number;
   initialCondition: string;
   initialTempC: number | null;
-  coolerTempMinC: number | null;
-  coolerTempMaxC: number | null;
+  coolerTempMarketC: number | null;
+  coolerTempLabC: number | null;
   iceToShrimpRatio: string;
   rejectionNotes: string | null;
   photos: PhotoItem[];
@@ -658,14 +658,8 @@ export default function BatchDetailPage() {
             <DataPair label="Panjang udang (cm)" value={num(batch.shrimpLengthCm, ' cm')} />
             <DataPair label="Ukuran (ekor/kg)" value={num(batch.sizeGrade)} />
             <DataPair label="Suhu awal udang (°C)" value={num(batch.initialTempC, ' °C')} />
-            <DataPair
-              label="Suhu cool box pasar → lab (°C)"
-              value={
-                batch.coolerTempMinC === null && batch.coolerTempMaxC === null
-                  ? EM_DASH
-                  : `${num(batch.coolerTempMinC)} → ${num(batch.coolerTempMaxC, ' °C')}`
-              }
-            />
+            <DataPair label="Suhu cool box saat di pasar (°C)" value={num(batch.coolerTempMarketC, ' °C')} />
+            <DataPair label="Suhu cool box saat di lab (°C)" value={num(batch.coolerTempLabC, ' °C')} />
           </dl>
         </div>
 

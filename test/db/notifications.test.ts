@@ -52,8 +52,8 @@ describe('Notifications Schema (Fase 1, revisi butir 9)', () => {
         initialCondition: 'DEAD',
         initialTempC: 8.2,
         arrivedAtUtc: new Date('2099-01-03T02:00:00.000Z'),
-        coolerTempMinC: 1.2,
-        coolerTempMaxC: 3.8,
+        coolerTempMarketC: 1.2,
+        coolerTempLabC: 3.8,
         operatorId: userId,
       },
     });

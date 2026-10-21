@@ -36,8 +36,8 @@ function batchBody(overrides: Record<string, unknown> = {}) {
     initialCondition: 'dead',
     initialTempC: 8.2,
     arrivedAtUtc: `${DAY}T02:00:00.000Z`,
-    coolerTempMinC: 1.2,
-    coolerTempMaxC: 3.8,
+    coolerTempMarketC: 1.2,
+    coolerTempLabC: 3.8,
     ...overrides,
   };
 }
@@ -140,6 +140,30 @@ describe('HTTP API v1: Dataset Batches, Groups, Sessions & Lock (Fase 3)', () =>
       })
     );
     assert.strictEqual(bad.status, 422);
+  });
+
+  it('1c. cooler market/lab kanonik + alias lama min/max tetap diterima (butir 7)', async () => {
+    // Kiriman nama lama tetap sah: kontrak JSON versi sebelumnya tidak putus.
+    const legacy = batchBody({
+      coolerTempMarketC: undefined,
+      coolerTempLabC: undefined,
+      coolerTempMinC: 1.5,
+      coolerTempMaxC: 3.2,
+    });
+    const res = await createBatch(
+      new Request('http://localhost:3000/api/v1/batches', {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify(legacy),
+      })
+    );
+    assert.strictEqual(res.status, 201);
+    const body = await res.json();
+    assert.strictEqual(body.data.coolerTempMarketC, 1.5);
+    assert.strictEqual(body.data.coolerTempLabC, 3.2);
+    assert.strictEqual(body.data.coolerTempMinC, 1.5);
+    assert.strictEqual(body.data.coolerTempMaxC, 3.2);
+    await prisma.collectionBatch.delete({ where: { batchId: body.data.batchId } });
   });
 
   it('2. POST /batches menolak shrimpCount < 10 (422)', async () => {

@@ -81,8 +81,8 @@ describe('Dataset Backfill Session Readings (Fase 6)', () => {
         initialCondition: 'DEAD',
         initialTempC: 8.2,
         arrivedAtUtc: new Date('2099-05-05T02:00:00.000Z'),
-        coolerTempMinC: 1.2,
-        coolerTempMaxC: 3.8,
+        coolerTempMarketC: 1.2,
+        coolerTempLabC: 3.8,
         operatorId: user.id,
       },
     });

@@ -41,8 +41,8 @@ async function batchData(suffix: string, operatorId: string) {
       initialCondition: 'DEAD',
       initialTempC: 8,
       arrivedAtUtc: new Date(`${DAY}T02:00:00.000Z`),
-      coolerTempMinC: 1,
-      coolerTempMaxC: 3,
+      coolerTempMarketC: 1,
+      coolerTempLabC: 3,
       operatorId,
     },
   });
