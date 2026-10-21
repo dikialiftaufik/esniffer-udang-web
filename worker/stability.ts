@@ -27,6 +27,36 @@ export const WARMUP_STABLE_MESSAGE = 'Sensor stabil, sesi siap dimulai';
 const MAX_SESSIONS_PER_SWEEP = 20;
 
 /**
+ * Buat notifikasi "sesi stabil" untuk satu sesi, satu kali per sesi.
+ * Mengembalikan `created` bila baris baru dibuat, atau `already` bila sweep
+ * lain lebih dulu: unique (session_id, kind) menolak duplikat (P2002) dan
+ * balapan itu diperlakukan sebagai sukses idempoten — bukan crash yang
+ * membatalkan sisa loop sweep (kasus restart/scaled worker berjalan tumpang
+ * tindih, keduanya lolos precheck sebelum baris tercatat).
+ */
+export async function createStableNotification(input: {
+  userId: string;
+  batchId: string;
+  sessionId: string;
+}): Promise<'created' | 'already'> {
+  try {
+    await prisma.notification.create({
+      data: {
+        userId: input.userId,
+        batchId: input.batchId,
+        sessionId: input.sessionId,
+        kind: WARMUP_STABLE_KIND,
+        message: WARMUP_STABLE_MESSAGE,
+      },
+    });
+    return 'created';
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'P2002') throw err;
+    return 'already';
+  }
+}
+
+/**
  * Evaluasi semua sesi aktif dan buat notifikasi untuk sesi yang stabil.
  * Mengembalikan jumlah notifikasi yang baru dibuat. `now` disuntik agar
  * test dapat mengatur jendela.
@@ -49,7 +79,9 @@ export async function sweepStableSessions(now: Date = new Date()): Promise<numbe
 
   let created = 0;
   for (const session of sessions) {
-    // Sekali per sesi: notifikasi warmup stabil sudah pernah ada → lewati.
+    // Precheck murah: notifikasi warmup stabil sudah pernah ada → lewati.
+    // Bukan penjaga utama — unique (session_id, kind) di DB yang backstop
+    // balapan antar sweep (lihat createStableNotification).
     if (session.notifications.length > 0) continue;
 
     const lower = windowStart.getTime() > session.startedAtUtc.getTime()
@@ -106,20 +138,16 @@ export async function sweepStableSessions(now: Date = new Date()): Promise<numbe
 
     // Penerima tunggal: operator batch yang memulai rangkaian sesi ini.
     // Unique (session_id, kind) melindungi dari penciptaan ganda.
-    await prisma.notification.create({
-      data: {
-        userId: session.batch.operatorId,
-        batchId: session.batchId,
-        sessionId: session.sessionId,
-        kind: WARMUP_STABLE_KIND,
-        message: WARMUP_STABLE_MESSAGE,
-      },
+    const outcome = await createStableNotification({
+      userId: session.batch.operatorId,
+      batchId: session.batchId,
+      sessionId: session.sessionId,
     });
-    created++;
+    if (outcome === 'created') created++;
     logger.info({
       service: 'worker',
       operation: 'stability_sweep',
-      outcome: 'notified',
+      outcome: outcome === 'created' ? 'notified' : 'already_notified',
       session_id: session.sessionId,
       batch_id: session.batchId,
     });

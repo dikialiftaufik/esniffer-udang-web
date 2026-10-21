@@ -8,7 +8,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { prisma, allocateHistorySequence, closeDb } from '../../lib/db/client.ts';
-import { sweepStableSessions } from '../../worker/stability.ts';
+import { sweepStableSessions, createStableNotification } from '../../worker/stability.ts';
 import { buildSessionId } from '../../shared/dataset.ts';
 
 interface SynthPoint {
@@ -277,5 +277,26 @@ describe('sweepStableSessions (butir 9, lapisan worker)', () => {
     await sweepStableSessions(new Date());
     const recount = await prisma.notification.count({ where: { sessionId: SESSION_STABLE } });
     assert.strictEqual(recount, 1);
+  });
+
+  it('dua pembuat balapan untuk sesi sama: P2002 ditegakkan, sweep tak crash dan tak duplikat', async () => {
+    // Jalur catch P2002 diuji deterministik: pemanggilan langsung (tanpa
+    // precheck sweep) dua kali untuk sesi yang sama — meniru dua sweep yang
+    // sama-sama lolos precheck lalu membuat baris pada waktu bersamaan.
+    // Sesi UNSTABLE aman dipakai: sweep di atas tidak pernah menotifikasinya.
+    const first = await createStableNotification({
+      userId,
+      batchId: BATCH,
+      sessionId: SESSION_UNSTABLE,
+    });
+    assert.strictEqual(first, 'created');
+    const second = await createStableNotification({
+      userId,
+      batchId: BATCH,
+      sessionId: SESSION_UNSTABLE,
+    });
+    assert.strictEqual(second, 'already', 'duplikat unique (session, kind) diperlakukan idempoten');
+    const count = await prisma.notification.count({ where: { sessionId: SESSION_UNSTABLE } });
+    assert.strictEqual(count, 1, 'tepat satu baris tersimpan meski dua kali diminta');
   });
 });
