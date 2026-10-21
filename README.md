@@ -20,6 +20,20 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Database
+
+Prasyarat: **PostgreSQL 12 atau lebih baru**. Migrasi `20261019070000_source_type_supermarket` memakai `ALTER TYPE ... ADD VALUE` yang baru boleh berjalan di dalam transaksi sejak PostgreSQL 12; versi lebih lama akan menggagalkan migrasi.
+
+```bash
+# terapkan seluruh migrasi
+npx prisma migrate deploy
+
+# cek migrasi ↔ schema.prisma tidak melenceng (drift check)
+npm run db:drift
+```
+
+`npm run db:drift` memakai shadow database terpisah di server yang sama (`<DATABASE_URL>_shadow`, mis. `esniffer_dev_shadow`). Buat sekali dengan `createdb esniffer_dev_shadow`; override lewat env `SHADOW_DATABASE_URL` bila server melarang `CREATEDB`.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

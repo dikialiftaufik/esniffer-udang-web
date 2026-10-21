@@ -16,6 +16,7 @@
     "test:e2e": "node --experimental-strip-types --test --test-concurrency=1 test/e2e/*.test.ts",
     "test:api": "node --experimental-strip-types --test --test-concurrency=1 test/api/*.test.ts",
     "db:seed": "node --experimental-strip-types prisma/seed.ts",
+    "db:drift": "prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code",
     "mosquitto:up": "docker run -d --name esniffer-mosquitto -p 127.0.0.1:1883:1883 -v $(pwd)/docker/mosquitto/config:/mosquitto/config eclipse-mosquitto:2",
     "mosquitto:down": "docker rm -f esniffer-mosquitto"
   },
