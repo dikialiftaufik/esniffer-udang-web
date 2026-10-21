@@ -1,7 +1,13 @@
 /**
- * Draf wizard batch baru (revisi putaran 2 butir 13): teks form tersimpan di
+ * Draf wizard batch baru (revisi putaran 2 butir 13): isian form disimpan di
  * localStorage browser, bukan di server. Foto tidak ikut — File tidak bisa
  * diserialisasi ke JSON dan tetap harus dipilih ulang secara manual.
+ *
+ * Tiga aturan agar draf tidak menyesatkan:
+ * - kunci versi: perubahan skema menaikkan versi kunci sehingga draf lama
+ *   dibuang, bukan dibaca bentrok;
+ * - masa berlaku: draf yang terlalu lama dibuang saat dimuat;
+ * - cakupan pengguna: draf milik akun lain diabaikan (perangkat bersama).
  */
 
 export interface BatchDraft {
@@ -20,9 +26,27 @@ export interface BatchDraft {
   deviationAck?: boolean;
   groupSr?: unknown;
   groupSd?: unknown;
+  /** Cap waktu simpan terakhir (epoch ms) — dasar masa berlaku draf. */
+  savedAt?: number;
+  /** Pemilik draf; draf milik akun lain diabaikan. */
+  userId?: string;
+  /** Caption foto tersimpan (berkas foto tidak ikut, lihat butir 13). */
+  batchCaptions?: string[];
+  groupCaptionsSr?: string[];
+  groupCaptionsSd?: string[];
 }
 
-const BATCH_DRAFT_KEY = 'esniffer:batch-draft-v1';
+const BATCH_DRAFT_KEY = 'esniffer:batch-draft-v2';
+
+/** Draf dianggap kedaluwarsa setelah 7 hari. */
+export const DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Nilai bawaan form — bukan tanda pengguna mengisi. */
+const PRISTINE_DEFAULTS: Record<string, string> = {
+  sourceType: 'market',
+  shrimpCount: '12',
+  initialCondition: 'dead',
+};
 
 const storage = (): Storage | null => {
   try {
@@ -33,34 +57,75 @@ const storage = (): Storage | null => {
   }
 };
 
-/** Draf dianggap ada isi bila user mengetik sesuatu — waktu oxothe dari jam device tidak dihitung. */
+/**
+ * Draf dianggap bermakna bila ada isian di luar nilai bawaan. Waktu otomatis
+ * dari jam device tidak dihitung — filled form tanpa sentuhan pengguna bukan
+ * draf yang perlu dipulihkan.
+ */
 export const draftMeaningful = (d: BatchDraft): boolean =>
-  [
-    d.marketSource,
-    d.sourceType,
-    d.shrimpCount,
-    d.shrimpLengthCm,
-    d.totalWeightG,
-    d.initialCondition,
-    d.initialTempC,
-    d.coolerMarket,
-    d.coolerLab,
-  ].some((v) => typeof v === 'string' && v.trim() !== '');
+  (
+    [
+      'marketSource',
+      'sourceType',
+      'shrimpCount',
+      'shrimpLengthCm',
+      'totalWeightG',
+      'initialCondition',
+      'initialTempC',
+      'coolerMarket',
+      'coolerLab',
+    ] as const
+  ).some((k) => {
+    const v = d[k];
+    if (typeof v !== 'string' || v.trim() === '') return false;
+    return PRISTINE_DEFAULTS[k] !== v;
+  });
 
+/** True bila draf masih memuat isi apa pun. */
+const hasAnyContent = (d: BatchDraft): boolean => {
+  const scalars = [
+    'procuredAt',
+    'arrivedAt',
+    'marketSource',
+    'sourceType',
+    'shrimpCount',
+    'shrimpLengthCm',
+    'totalWeightG',
+    'initialCondition',
+    'initialTempC',
+    'coolerMarket',
+    'coolerLab',
+  ] as const;
+  if (scalars.some((k) => typeof d[k] === 'string' && d[k]!.trim() !== '')) return true;
+  if (d.deviationAck === true) return true;
+  const captionGroups = [d.batchCaptions, d.groupCaptionsSr, d.groupCaptionsSd];
+  return captionGroups.some(
+    (c) => Array.isArray(c) && c.some((x) => typeof x === 'string' && x.trim() !== '')
+  );
+};
+
+/**
+ * Simpan draf. Cap waktu disimpan di sini supaya tidak ada pemanggil yang
+ * lupa menandainya — tanpa cap waktu draf tidak bisa dinilai umurnya.
+ */
 export function saveBatchDraft(draft: BatchDraft): void {
-  if (!draftMeaningful(draft)) {
+  if (!hasAnyContent(draft)) {
     // Semua dikosongkan user? Bersihkan draf agar tidak bangkit dari kuburan.
     removeBatchDraft();
     return;
   }
   try {
-    storage()?.setItem(BATCH_DRAFT_KEY, JSON.stringify(draft));
+    storage()?.setItem(BATCH_DRAFT_KEY, JSON.stringify({ ...draft, savedAt: Date.now() }));
   } catch {
     // Tanpa localStorage: wizard tetap jalan, hanya tanpa draf.
   }
 }
 
-export function loadBatchDraft(): BatchDraft | null {
+/**
+ * Muat draf yang masih berlaku. Draf kedaluwarsa (atau dari skema lama tanpa
+ * cap waktu) dibuang; draf milik pengguna lain diabaikan tanpa dihapus.
+ */
+export function loadBatchDraft(userId?: string): BatchDraft | null {
   try {
     const raw = storage()?.getItem(BATCH_DRAFT_KEY);
     if (!raw) {
@@ -70,7 +135,20 @@ export function loadBatchDraft(): BatchDraft | null {
     if (typeof parsed !== 'object' || parsed === null) {
       return null;
     }
-    return parsed as BatchDraft;
+    const draft = parsed as BatchDraft;
+    if (typeof draft.savedAt !== 'number' || !Number.isFinite(draft.savedAt)) {
+      // Skema lama tanpa cap waktu — umurnya tidak bisa dinilai, jadi dibuang.
+      storage()?.removeItem(BATCH_DRAFT_KEY);
+      return null;
+    }
+    if (Date.now() - draft.savedAt > DRAFT_MAX_AGE_MS) {
+      storage()?.removeItem(BATCH_DRAFT_KEY);
+      return null;
+    }
+    if (userId && draft.userId && draft.userId !== userId) {
+      return null;
+    }
+    return draft;
   } catch {
     return null;
   }

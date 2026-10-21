@@ -187,6 +187,23 @@ export function wibInputToUtc(input: string): Date {
   return new Date(Date.UTC(y, mo - 1, d, h, mi) - WIB_OFFSET_MINUTES * 60_000);
 }
 
+/**
+ * Format satu instants (jam device) menjadi nilai input `datetime-local`
+ * (YYYY-MM-DDTHH:mm) dalam zona WIB — dipakai wizard yang berlabel WIB.
+ */
+export function wibDateTimeLocal(date: Date): string {
+  const wib = new Date(date.getTime() + WIB_OFFSET_MINUTES * 60_000);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${wib.getUTCFullYear()}-${pad(wib.getUTCMonth() + 1)}-${pad(wib.getUTCDate())}T${pad(wib.getUTCHours())}:${pad(wib.getUTCMinutes())}`;
+}
+
+/** Format ringkas WIB untuk teks UI: "21/10/2026 12:30 WIB". */
+export function formatWibDateTime(date: Date): string {
+  const wib = new Date(date.getTime() + WIB_OFFSET_MINUTES * 60_000);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${pad(wib.getUTCDate())}/${pad(wib.getUTCMonth() + 1)}/${wib.getUTCFullYear()} ${pad(wib.getUTCHours())}:${pad(wib.getUTCMinutes())} WIB`;
+}
+
 /** Label ganda untuk UI: "07:00 WIB → tersimpan 00:00 UTC". */
 export function formatWibLabel(dateUtc: Date): string {
   const wib = new Date(dateUtc.getTime() + WIB_OFFSET_MINUTES * 60_000);
