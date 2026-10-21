@@ -6,6 +6,7 @@ import { useAuth } from '../../../components/auth/AuthProvider';
 import ConfirmDialog from '../../../components/ui/ConfirmDialog';
 import SuccessNotice, { useSuccessNotice } from '../../../components/ui/SuccessNotice';
 import { TIMEPOINT_SEQUENCES, MAX_PHOTO_BYTES, MAX_PHOTO_CAPTION_LENGTH } from '../../../shared/dataset.ts';
+import { validateGroupFields, groupWeightWarning } from '../../../lib/batch-wizard.ts';
 import type { ApiSessionStatus } from '../../../lib/api/dataset.ts';
 
 interface SessionItem {
@@ -15,12 +16,15 @@ interface SessionItem {
   status: ApiSessionStatus;
   warmupDone: boolean;
   cleaningDone: boolean;
+  chamberId: string | null;
+  deviceId: string | null;
 }
 
 interface GroupItem {
   groupId: string;
   storageCondition: string;
   coldStorageMode: string;
+  chamberId: string | null;
   targetTempC: number | null;
   labTempC: number | null;
   visualCheck: string;
@@ -28,6 +32,14 @@ interface GroupItem {
   labWeightAfterG: number | null;
   sampleShrimpCount: number;
   sessions: SessionItem[];
+}
+
+/** Device yang terpasang pada chamber (butir 4: device dipilih otomatis). */
+interface DeviceItem {
+  id: string;
+  mqttDeviceId: string;
+  name: string;
+  chamberId: string | null;
 }
 
 interface PhotoItem {
@@ -62,9 +74,9 @@ const SD_TIMEPOINTS = TIMEPOINT_SEQUENCES.cold;
 
 const cardCls = 'p-5 rounded-2xl bg-white/10 backdrop-blur-lg border border-white/20 space-y-3';
 const btnPrimary =
-  'px-4 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-mono font-bold tracking-wider transition-all disabled:opacity-50';
+  'px-4 py-2 min-h-[44px] rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-mono font-bold tracking-wider transition-all disabled:opacity-50';
 const btnGhost =
-  'px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 text-xs font-mono font-bold transition-all disabled:opacity-50';
+  'px-4 py-2 min-h-[44px] rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 text-xs font-mono font-bold transition-all disabled:opacity-50';
 
 /** Tanggal + jam WIB (UTC+7) — input wizard memakai datetime-local WIB. */
 const dtFmt = new Intl.DateTimeFormat('id-ID', {
@@ -135,6 +147,9 @@ export default function BatchDetailPage() {
   const [cleaning, setCleaning] = useState<Record<string, boolean>>({});
   const [chSel, setChSel] = useState<Record<string, string>>({});
   const [chambers, setChambers] = useState<Array<{ id: string; code: string; name: string }>>([]);
+  // Butir 4: device tidak lagi dipilih; chamber menentukan device, ditampilkan
+  // sebagai teks baca-saja.
+  const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [filePreviews, setFilePreviews] = useState<string[]>([]);
   const [fileCaptions, setFileCaptions] = useState<string[]>([]);
@@ -148,7 +163,9 @@ export default function BatchDetailPage() {
     labTempC: string;
     labWeightBeforeG: string;
     labWeightAfterG: string;
+    coldStorageMode: 'chamber' | 'plain_fridge';
   } | null>(null);
+  const [groupErrors, setGroupErrors] = useState<Record<string, string>>({});
   const [savingGroup, setSavingGroup] = useState(false);
   // Modal form pra-sesi: input suhu berat foto sebelum start sesi.
   const [preSessionModal, setPreSessionModal] = useState<{
@@ -221,6 +238,52 @@ export default function BatchDetailPage() {
       })
       .catch(() => {});
   }, [user, apiFetch]);
+
+  // Butir 4: device diturunkan dari chamber yang terpasang — tanpa dropdown.
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+    apiFetch('/api/v1/devices?limit=100')
+      .then(async (res) => {
+        if (!res.ok) return;
+        const json = await res.json();
+        if (Array.isArray(json.data)) {
+          setDevices(
+            json.data.map(
+              (d: {
+                id: string;
+                mqttDeviceId?: string;
+                name?: string;
+                activeAssignment?: { chamber?: { id: string } | null } | null;
+              }) => ({
+                id: d.id,
+                mqttDeviceId: d.mqttDeviceId || d.id,
+                name: d.name || d.mqttDeviceId || d.id,
+                chamberId: d.activeAssignment?.chamber?.id ?? null,
+              })
+            )
+          );
+        }
+      })
+      .catch(() => {});
+  }, [user, apiFetch]);
+
+  /** Device yang terpasang pada chamber — pemetaan otomatis, bukan pilihan user. */
+  const deviceForChamber = (chamberId: string | null): DeviceItem | null =>
+    chamberId ? devices.find((d) => d.chamberId === chamberId) ?? null : null;
+
+  /** Nama chamber untuk ditampilkan (butir 1). */
+  const chamberName = (chamberId: string | null): string => {
+    if (!chamberId) return '';
+    return chambers.find((c) => c.id === chamberId)?.name ?? chamberId;
+  };
+
+  /** Label device untuk sesi yang sudah tertaut (butir 4). */
+  const deviceLabel = (deviceId: string | null): string | null => {
+    if (!deviceId) return null;
+    return devices.find((d) => d.id === deviceId)?.mqttDeviceId ?? null;
+  };
 
   const callJson = async (url: string, payload: unknown) => {
     const res = await apiFetch(url, {
@@ -326,10 +389,14 @@ export default function BatchDetailPage() {
         if (!res.ok) throw new Error(body.error?.message || `Gagal mengunggah foto (kode ${res.status}).`);
       }
       // 3. Baru saat ini sesi dibuat.
+      // Grup "langsung di kulkas" (butir 1) tidak pernah ditautkan ke chamber.
+      const targetGroup = batch?.sampleGroups.find((g) => g.groupId === groupId);
+      const chamberId =
+        targetGroup?.coldStorageMode === 'plain_fridge' ? null : chSel[groupId] || null;
       await callJson(`/api/v1/groups/${encodeURIComponent(groupId)}/sessions`, {
         timepointCode,
         warmupDone: true,
-        chamberId: chSel[groupId] || null,
+        chamberId,
       });
       setPreSessionModal(null);
       notify(`Sesi ${timepointCode} berhasil dimulai.`);
@@ -497,10 +564,26 @@ export default function BatchDetailPage() {
   /** Butir 3: buka form edit data grup di halaman detail. */
   const startGroupEdit = (g: GroupItem) => {
     setEditGroupId(g.groupId);
+    setGroupErrors({});
     setGroupDraft({
       labTempC: g.labTempC === null ? '' : String(g.labTempC),
       labWeightBeforeG: g.labWeightBeforeG === null ? '' : String(g.labWeightBeforeG),
       labWeightAfterG: g.labWeightAfterG === null ? '' : String(g.labWeightAfterG),
+      coldStorageMode: g.coldStorageMode === 'plain_fridge' ? 'plain_fridge' : 'chamber',
+    });
+  };
+
+  /** Peringatan berat untuk form edit grup yang sedang dibuka. */
+  const draftWeightWarning = (g: GroupItem): string | null => {
+    if (!groupDraft || editGroupId !== g.groupId) {
+      return null;
+    }
+    return groupWeightWarning({
+      labTempC: groupDraft.labTempC,
+      visualCheck: g.visualCheck,
+      labWeightBeforeG: groupDraft.labWeightBeforeG,
+      labWeightAfterG: groupDraft.labWeightAfterG,
+      sampleShrimpCount: String(g.sampleShrimpCount),
     });
   };
 
@@ -508,12 +591,20 @@ export default function BatchDetailPage() {
     if (!groupDraft) {
       return;
     }
-    for (const v of [groupDraft.labTempC, groupDraft.labWeightBeforeG, groupDraft.labWeightAfterG]) {
-      if (v.trim() === '' || !Number.isFinite(Number(v))) {
-        notify('Ketiga nilai harus angka yang sah — periksa kembali.');
-        return;
-      }
+    // Aturan kolom grup: sumber tunggal sama dengan wizard (butir 3).
+    const errs = validateGroupFields({
+      labTempC: groupDraft.labTempC,
+      visualCheck: g.visualCheck,
+      labWeightBeforeG: groupDraft.labWeightBeforeG,
+      labWeightAfterG: groupDraft.labWeightAfterG,
+      sampleShrimpCount: String(g.sampleShrimpCount),
+    });
+    if (Object.keys(errs).length > 0) {
+      setGroupErrors(errs);
+      notify('Periksa lagi kolom yang ditandai.');
+      return;
     }
+    setGroupErrors({});
     setSavingGroup(true);
     try {
       const res = await apiFetch(`/api/v1/groups/${encodeURIComponent(g.groupId)}`, {
@@ -523,6 +614,8 @@ export default function BatchDetailPage() {
           labTempC: Number(groupDraft.labTempC),
           labWeightBeforeG: Number(groupDraft.labWeightBeforeG),
           labWeightAfterG: Number(groupDraft.labWeightAfterG),
+          // Butir 1: mode penyimpanan hanya relevan untuk grup dingin.
+          ...(g.storageCondition === 'cold' ? { coldStorageMode: groupDraft.coldStorageMode } : {}),
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -650,7 +743,7 @@ export default function BatchDetailPage() {
             <DataPair label="Tanggal dan jam beli (WIB)" value={dtFmt.format(new Date(batch.procuredAtUtc))} />
             <DataPair label="Tanggal dan jam tiba di lab (WIB)" value={dtFmt.format(new Date(batch.arrivedAtUtc))} />
             <DataPair label="Durasi beli ke tiba" value={durationText(batch.procuredAtUtc, batch.arrivedAtUtc)} />
-            <DataPair label="Sumber pasar" value={batch.marketSource} />
+            <DataPair label="Sumber" value={batch.marketSource} />
             <DataPair label="Jenis sumber" value={SOURCE_LABEL[batch.sourceType] ?? batch.sourceType} />
             <DataPair label="Kondisi awal udang" value={CONDITION_LABEL[batch.initialCondition] ?? batch.initialCondition} />
             <DataPair label="Jumlah total udang (ekor)" value={num(batch.shrimpCount)} />
@@ -681,6 +774,13 @@ export default function BatchDetailPage() {
                     ? `Suhu Dingin, ${g.coldStorageMode === 'plain_fridge' ? 'langsung di kulkas' : 'chamber'} (4 ± 1 °C)`
                     : 'Suhu Ruang (25 ± 2 °C)'}
                 </p>
+                <p className="text-[11px] font-mono text-white/50">
+                  {g.storageCondition === 'cold'
+                    ? g.coldStorageMode === 'plain_fridge'
+                      ? 'Penyimpanan: langsung di kulkas (tanpa chamber).'
+                      : `Penyimpanan: dalam chamber${g.chamberId ? ` — ${chamberName(g.chamberId)}` : ' (belum ditugaskan)'}.`
+                    : 'Penyimpanan: ruang (25 ± 1 °C).'}
+                </p>
                 <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3 mt-1.5">
                   <DataPair label="Suhu udang sebelum observasi (°C)" value={num(g.labTempC, ' °C')} />
                   <DataPair label="Temuan visual udang" value={VISUAL_LABEL[g.visualCheck] ?? g.visualCheck} />
@@ -688,6 +788,29 @@ export default function BatchDetailPage() {
                   <DataPair label="Berat sampel sebelum observasi (g)" value={num(g.labWeightBeforeG, ' g')} />
                   <DataPair label="Berat sampel sesudah observasi (g)" value={num(g.labWeightAfterG, ' g')} />
                 </dl>
+                {/* Butir 2: foto grup tampil di section grupnya. */}
+                {batch.photos.some((p) => p.groupId === g.groupId) && (
+                  <div className="mt-2">
+                    <p className="text-[11px] font-mono text-white/45">Foto grup</p>
+                    <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mt-1">
+                      {batch.photos
+                        .filter((p) => p.groupId === g.groupId)
+                        .map((p) => (
+                          <figure key={p.url} className="space-y-1">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={`/${p.url}`}
+                              alt={p.caption || `Foto grup ${g.groupId}`}
+                              className="w-full h-20 object-cover rounded-lg border border-white/10"
+                            />
+                            <figcaption className="text-[10px] font-mono text-white/50 truncate">
+                              {p.caption}
+                            </figcaption>
+                          </figure>
+                        ))}
+                    </div>
+                  </div>
+                )}
                 {isAdmin && !locked && editGroupId !== g.groupId && (
                   <button type="button" onClick={() => startGroupEdit(g)} className={btnGhost}>
                     Edit data grup
@@ -703,8 +826,43 @@ export default function BatchDetailPage() {
                     className="border-t border-white/10 pt-3 space-y-2"
                   >
                     <p className="text-[11px] font-mono text-white/60">
-                      Field memakai aturan yang sama dengan wizard: suhu -2 sampai 30 °C, berat sampai 2000 g.
+                      Field memakai aturan yang sama dengan wizard: suhu -2 sampai 30 °C, berat lebih dari 0 g.
                     </p>
+                    {g.storageCondition === 'cold' && (
+                      <fieldset className="space-y-1">
+                        <legend className="text-[11px] font-mono font-semibold text-white/80">
+                          Tempat penyimpanan (butir 1)
+                        </legend>
+                        <div className="flex flex-wrap gap-3">
+                          {(
+                            [
+                              ['chamber', 'Dalam chamber'],
+                              ['plain_fridge', 'Langsung di kulkas, tanpa chamber'],
+                            ] as const
+                          ).map(([value, label]) => (
+                            <label key={value} className="flex items-center gap-1.5 text-[11px] font-mono text-white/80">
+                              <input
+                                type="radio"
+                                name={`cold-mode-${g.groupId}`}
+                                checked={groupDraft.coldStorageMode === value}
+                                onChange={() =>
+                                  setGroupDraft((prev) =>
+                                    prev ? { ...prev, coldStorageMode: value } : prev
+                                  )
+                                }
+                                className="accent-cyan-400"
+                              />
+                              {label}
+                            </label>
+                          ))}
+                        </div>
+                        {groupDraft.coldStorageMode === 'plain_fridge' && (
+                          <p className="text-[11px] font-mono text-amber-200/80">
+                            Grup ini tanpa chamber — pemilihan chamber disembunyikan saat mulai sesi.
+                          </p>
+                        )}
+                      </fieldset>
+                    )}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       {(
                         [
@@ -716,21 +874,41 @@ export default function BatchDetailPage() {
                         <label key={key} className="flex flex-col gap-1">
                           <span className="text-[11px] font-mono font-semibold text-white/80">{label}</span>
                           <input
+                            id={key}
+                            name={key}
                             type="number"
                             step="0.1"
                             inputMode="decimal"
                             autoComplete="off"
                             value={groupDraft[key]}
                             aria-required="true"
-                            onChange={(e) =>
-                              setGroupDraft((prev) => (prev ? { ...prev, [key]: e.target.value } : prev))
-                            }
+                            aria-invalid={!!groupErrors[key]}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setGroupDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
+                              setGroupErrors((prev) => {
+                                if (!prev[key]) return prev;
+                                const next = { ...prev };
+                                delete next[key];
+                                return next;
+                              });
+                            }}
                             placeholder={placeholder}
-                            className="w-full px-3 py-2 rounded-xl bg-black/25 border border-white/10 text-sm font-mono text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-400/60"
+                            className={`w-full px-3 py-2 rounded-xl bg-black/25 border text-sm font-mono text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-400/60 ${
+                              groupErrors[key] ? 'border-rose-400/70' : 'border-white/10'
+                            }`}
                           />
+                          {groupErrors[key] && (
+                            <span role="alert" className="text-[11px] font-mono text-rose-300">
+                              {groupErrors[key]}
+                            </span>
+                          )}
                         </label>
                       ))}
                     </div>
+                    {draftWeightWarning(g) && (
+                      <p className="text-[11px] font-mono text-amber-200/90">{draftWeightWarning(g)}</p>
+                    )}
                     <div className="flex gap-2">
                       <button type="submit" disabled={savingGroup} className={btnPrimary}>
                         Simpan perubahan
@@ -809,7 +987,7 @@ export default function BatchDetailPage() {
                     disabled={busy}
                     aria-label={`Hapus foto ${i + 1}`}
                     title={`Hapus foto ${i + 1}`}
-                    className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 hover:bg-rose-500/80 border border-white/20 text-white text-xs font-bold leading-none transition-colors disabled:opacity-50"
+                    className="absolute top-1 right-1 w-8 h-8 rounded-full bg-black/60 hover:bg-rose-500/80 border border-white/20 text-white text-xs font-bold leading-none flex items-center justify-center transition-colors disabled:opacity-50"
                   >
                     ×
                   </button>
@@ -865,7 +1043,7 @@ export default function BatchDetailPage() {
                       type="button"
                       onClick={() => removePhoto(i)}
                       aria-label={`Hapus foto ${i + 1} dari pilihan`}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-rose-500/90 text-white text-[10px] font-bold leading-none hover:bg-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
+                      className="absolute -top-2 -right-2 w-8 h-8 rounded-full bg-rose-500/90 text-white text-[12px] font-bold leading-none flex items-center justify-center hover:bg-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
                     >
                       ×
                     </button>
@@ -948,6 +1126,13 @@ export default function BatchDetailPage() {
                         >
                           {s.status}
                         </span>
+                        {s.chamberId && (
+                          <span className="text-[10px] font-mono text-white/45">
+                            {' '}
+                            • Chamber: {chamberName(s.chamberId)}
+                            {deviceLabel(s.deviceId) ? ` — Device: ${deviceLabel(s.deviceId)}` : ''}
+                          </span>
+                        )}
                       </div>
                       {isAdmin && !locked && s.status === 'incomplete' && (
                         <button onClick={() => void handleReopen(s)} disabled={busy} className={btnGhost} title="Buka ulang sesi untuk mengukur ulang timepoint ini">
@@ -976,21 +1161,38 @@ export default function BatchDetailPage() {
                     </option>
                   ))}
                 </select>
-                <select
-                  value={chSel[g.groupId] || ''}
-                  onChange={(e) => setChSel({ ...chSel, [g.groupId]: e.target.value })}
-                  aria-label="Chamber sesi (opsional, wajib agar data tertaut)"
-                  className="px-3 py-2 rounded-xl bg-black/25 border border-white/10 text-xs font-mono text-white max-w-[180px]"
-                >
-                  <option value="" className="bg-slate-900">
-                    Chamber: —
-                  </option>
-                  {chambers.map((c) => (
-                    <option key={c.id} value={c.id} className="bg-slate-900">
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                {g.coldStorageMode === 'plain_fridge' ? (
+                  // Butir 1: grup "langsung di kulkas" tidak memakai chamber,
+                  // jadi pemilih chamber disembunyikan.
+                  <p className="text-[11px] font-mono text-amber-200/80">
+                    Grup ini disimpan langsung di kulkas — tanpa chamber, jadi sensor chamber tidak ditautkan.
+                  </p>
+                ) : (
+                  <>
+                    <select
+                      value={chSel[g.groupId] || ''}
+                      onChange={(e) => setChSel({ ...chSel, [g.groupId]: e.target.value })}
+                      aria-label="Chamber sesi (opsional, wajib agar data tertaut)"
+                      className="px-3 py-2 rounded-xl bg-black/25 border border-white/10 text-xs font-mono text-white max-w-[180px]"
+                    >
+                      <option value="" className="bg-slate-900">
+                        Chamber: —
+                      </option>
+                      {chambers.map((c) => (
+                        <option key={c.id} value={c.id} className="bg-slate-900">
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    {/* Butir 4: device dibaca dari chamber, bukan dipilih user. */}
+                    <span className="text-[11px] font-mono text-white/55">
+                      {(() => {
+                        const device = deviceForChamber(chSel[g.groupId] || null);
+                        return device ? `Device: ${device.mqttDeviceId}` : 'Device: otomatis dari chamber';
+                      })()}
+                    </span>
+                  </>
+                )}
                 <label className="flex items-center gap-1.5 text-[11px] font-mono text-white/70 cursor-pointer">
                   <input
                     type="checkbox"
@@ -1004,9 +1206,11 @@ export default function BatchDetailPage() {
                   Start Sesi
                 </button>
                 <p className="w-full text-[11px] font-mono text-white/45">
-                  {chSel[g.groupId]
-                    ? 'Chamber terisi: sensor chamber otomatis tertaut ke sesi.'
-                    : 'Chamber kosong: sesi ini tidak akan punya data sensor.'}
+                  {g.coldStorageMode === 'plain_fridge'
+                    ? 'Tanpa chamber: sesi ini sengaja tidak punya data sensor chamber.'
+                    : chSel[g.groupId]
+                      ? 'Chamber terisi: sensor chamber otomatis tertaut ke sesi.'
+                      : 'Chamber kosong: sesi ini tidak akan punya data sensor.'}
                 </p>
               </div>
             )}
@@ -1143,7 +1347,7 @@ export default function BatchDetailPage() {
                               photoCaptions: m.photoCaptions.filter((_, j) => j !== i),
                             } : null))}
                           aria-label={`Hapus foto ${i + 1} dari pilihan`}
-                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-rose-500/90 text-white text-[10px] font-bold leading-none hover:bg-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
+                          className="absolute -top-2 -right-2 w-8 h-8 rounded-full bg-rose-500/90 text-white text-[12px] font-bold leading-none flex items-center justify-center hover:bg-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
                         >
                           ×
                         </button>
