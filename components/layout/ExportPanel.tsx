@@ -10,6 +10,9 @@ interface ExportPanelProps {
   activeDeviceId?: string | null;
 }
 
+/** Jeda sebelum rentang kustom dipakai ulang (ms) — satu request, bukan per ketikan. */
+const HISTORY_APPLY_DEBOUNCE_MS = 400;
+
 export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: ExportPanelProps) {
   const searchParams = useSearchParams();
   const { apiFetch } = useAuth();
@@ -45,34 +48,58 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
   const windowRef = useRef<{ from: string; to: string } | null>(null);
   const [activeWindow, setActiveWindow] = useState<{ from: string; to: string } | null>(null);
 
-  // Filter jarak waktu tabel riwayat & ekspor (1h, 6h, 12h, 24h, 7d, 30d, kustom)
-  type HistoryRangeMode = '1h' | '6h' | '12h' | '24h' | '7d' | '30d' | 'custom';
+  // Filter jarak waktu tabel riwayat & ekspor
+  // (1h, 6h, 12h, 24h, today, 7d, 30d, 1y, kustom)
+  type HistoryRangeMode = '1h' | '6h' | '12h' | '24h' | 'today' | '7d' | '30d' | '1y' | 'custom';
   const [historyMode, setHistoryMode] = useState<HistoryRangeMode>('24h');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
+  // Nilai input terkini (ref) agar apply ber-debounce memakai nilai terbaru.
+  const customFromRef = useRef('');
+  const customToRef = useRef('');
+  // Timer apply rentang kustom (debounce: bukan satu request per ketikan).
+  const applyRangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Format instants ke nilai input datetime-local (waktu lokal peramban). */
+  const toLocalInput = (d: Date): string => {
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  /**
+   * Batas rentang preset. "1 Tahun" memakai aritmetika kalender (tahun kalender
+   * lalu), bukan 365 hari, agar identik dengan batas API satu tahun kalender.
+   */
+  const presetBounds = (
+    mode: Exclude<HistoryRangeMode, 'custom'>
+  ): { from: Date; to: Date } => {
+    const to = new Date();
+    const from = new Date(to.getTime());
+    if (mode === '1h') from.setTime(to.getTime() - 3_600_000);
+    else if (mode === '6h') from.setTime(to.getTime() - 6 * 3_600_000);
+    else if (mode === '12h') from.setTime(to.getTime() - 12 * 3_600_000);
+    else if (mode === '24h') from.setTime(to.getTime() - 24 * 3_600_000);
+    else if (mode === 'today') from.setHours(0, 0, 0, 0);
+    else if (mode === '7d') from.setTime(to.getTime() - 7 * 24 * 3_600_000);
+    else if (mode === '30d') from.setTime(to.getTime() - 30 * 24 * 3_600_000);
+    else if (mode === '1y') from.setUTCFullYear(from.getUTCFullYear() - 1);
+    return { from, to };
+  };
 
   const getHistoryBounds = (
     mode: HistoryRangeMode = historyMode,
     fromRaw = customFrom,
     toRaw = customTo
   ): { from: string; to: string } | null => {
-    const now = new Date();
-    let hours = 0;
-    if (mode === '1h') hours = 1;
-    else if (mode === '6h') hours = 6;
-    else if (mode === '12h') hours = 12;
-    else if (mode === '24h') hours = 24;
-    else if (mode === '7d') hours = 24 * 7;
-    else if (mode === '30d') hours = 24 * 30;
-
-    if (hours === 0) {
-      if (!fromRaw || !toRaw) return null;
-      const from = new Date(fromRaw);
-      const to = new Date(toRaw);
-      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) return null;
+    if (mode !== 'custom') {
+      const { from, to } = presetBounds(mode);
       return { from: from.toISOString(), to: to.toISOString() };
     }
-    return { from: new Date(now.getTime() - hours * 3_600_000).toISOString(), to: now.toISOString() };
+    if (!fromRaw || !toRaw) return null;
+    const from = new Date(fromRaw);
+    const to = new Date(toRaw);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) return null;
+    return { from: from.toISOString(), to: to.toISOString() };
   };
 
   const formatRangeLabel = (
@@ -83,8 +110,10 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
     if (mode === '6h') return '6 jam terakhir';
     if (mode === '12h') return '12 jam terakhir';
     if (mode === '24h') return '24 jam terakhir';
+    if (mode === 'today') return 'hari ini';
     if (mode === '7d') return '7 hari terakhir';
     if (mode === '30d') return '30 hari terakhir';
+    if (mode === '1y') return '1 tahun terakhir';
     if (bounds?.from && bounds?.to) {
       const f = new Date(bounds.from);
       const t = new Date(bounds.to);
@@ -96,23 +125,32 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
 
   /** Ganti rentang tabel riwayat dan muat ulang halaman 1. */
   const applyHistoryRange = (mode: HistoryRangeMode, from = '', to = '') => {
+    // Batalkan apply tertunda (mis. dari ketikan input) — rentang ini yang berlaku.
+    if (applyRangeTimerRef.current) {
+      clearTimeout(applyRangeTimerRef.current);
+      applyRangeTimerRef.current = null;
+    }
     let f = from;
     let t = to;
     if (mode === 'custom') {
-      f = from || customFrom;
-      t = to || customTo;
+      f = from || customFromRef.current;
+      t = to || customToRef.current;
       if (!f || !t) {
         const now = new Date();
-        const sixHoursAgo = new Date(now.getTime() - 6 * 3600 * 1000);
-        const pad = (n: number) => String(n).padStart(2, '0');
-        const fmt = (d: Date) =>
-          `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-        f = f || fmt(sixHoursAgo);
-        t = t || fmt(now);
+        const sixHoursAgo = new Date(now.getTime() - 6 * 3_600_000);
+        f = toLocalInput(sixHoursAgo);
+        t = toLocalInput(now);
       }
-      setCustomFrom(f);
-      setCustomTo(t);
+    } else {
+      // Preset mengisi kedua input (butir 10) — rentang efektif selalu terlihat.
+      const preset = presetBounds(mode);
+      f = toLocalInput(preset.from);
+      t = toLocalInput(preset.to);
     }
+    customFromRef.current = f;
+    customToRef.current = t;
+    setCustomFrom(f);
+    setCustomTo(t);
     const bounds = getHistoryBounds(mode, f, t);
     if (!bounds) {
       setHistoryError('Isi kedua tanggal dan jam kustom; "dari" harus sebelum "tujuan".');
@@ -124,6 +162,29 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
     windowRef.current = bounds;
     setActiveWindow(bounds);
     void fetchHistoryPage(null, 1, true, bounds);
+  };
+
+  /**
+   * Input rentang kustom: diterapkan otomatis setelah jeda (debounce) supaya
+   * tidak ada satu request per ketikan.
+   */
+  const onCustomInputChange = (which: 'from' | 'to', value: string) => {
+    if (which === 'from') {
+      customFromRef.current = value;
+      setCustomFrom(value);
+    } else {
+      customToRef.current = value;
+      setCustomTo(value);
+    }
+    if (applyRangeTimerRef.current) {
+      clearTimeout(applyRangeTimerRef.current);
+    }
+    applyRangeTimerRef.current = setTimeout(() => {
+      applyRangeTimerRef.current = null;
+      // Field kosong = belum valid; tunggu pengguna mengisi lagi.
+      if (!customFromRef.current || !customToRef.current) return;
+      applyHistoryRange('custom', customFromRef.current, customToRef.current);
+    }, HISTORY_APPLY_DEBOUNCE_MS);
   };
 
   const getRangeBounds = () => {
@@ -273,6 +334,16 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
     }
   };
 
+  // Bersihkan timer apply tertunda saat komponen dilepas.
+  useEffect(
+    () => () => {
+      if (applyRangeTimerRef.current) {
+        clearTimeout(applyRangeTimerRef.current);
+      }
+    },
+    []
+  );
+
   const handleOpenHistory = () => {
     setShowHistory(true);
     setHistoryRows([]);
@@ -368,7 +439,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
           <button
             onClick={() => void handleExportCsv()}
             disabled={isExporting}
-            className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500/30 to-teal-600/30 hover:from-emerald-500/40 hover:to-teal-600/40 border border-emerald-400/40 text-emerald-200 font-mono font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/20 transition-all disabled:opacity-50"
+            className="w-full py-3 px-4 min-h-[44px] rounded-xl bg-gradient-to-r from-emerald-500/30 to-teal-600/30 hover:from-emerald-500/40 hover:to-teal-600/40 border border-emerald-400/40 text-emerald-200 font-mono font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/20 transition-all disabled:opacity-50"
           >
             {isExporting ? (
               <>
@@ -395,7 +466,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
           {/* View History Table Button */}
           <button
             onClick={handleOpenHistory}
-            className="w-full py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/15 border border-white/20 text-white/90 font-mono font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all"
+            className="w-full py-2.5 px-4 min-h-[44px] rounded-xl bg-white/10 hover:bg-white/15 border border-white/20 text-white/90 font-mono font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all"
           >
             <svg className="h-4 w-4 text-cyan-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 4h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -453,7 +524,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                 onClick={() => setShowHistory(false)}
                 aria-label="Tutup riwayat"
                 autoFocus
-                className="shrink-0 p-2 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 text-white/60 hover:text-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                className="shrink-0 p-2 min-h-[44px] min-w-[44px] rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 text-white/60 hover:text-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -475,20 +546,21 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                 <div className="flex flex-wrap items-center gap-1.5">
                   {(
                     [
+                      { mode: 'today', label: 'Hari Ini' },
                       { mode: '1h', label: '1 Jam' },
                       { mode: '6h', label: '6 Jam' },
                       { mode: '12h', label: '12 Jam' },
                       { mode: '24h', label: '24 Jam' },
                       { mode: '7d', label: '7 Hari' },
                       { mode: '30d', label: '30 Hari' },
-                      { mode: 'custom', label: 'Kustom' },
+                      { mode: '1y', label: '1 Tahun' },
                     ] as const
                   ).map((item) => (
                     <button
                       key={item.mode}
                       type="button"
                       onClick={() => applyHistoryRange(item.mode)}
-                      className={`px-3 py-1.5 rounded-xl border text-[11px] font-mono cursor-pointer touch-manipulation transition-all font-semibold ${
+                      className={`px-3 py-1.5 min-h-[44px] rounded-xl border text-[11px] font-mono cursor-pointer touch-manipulation transition-all font-semibold ${
                         item.mode === historyMode
                           ? 'bg-cyan-500/25 border-cyan-400 text-white shadow-sm shadow-cyan-500/20'
                           : 'bg-black/20 border-white/10 text-white/70 hover:border-white/25 hover:text-white'
@@ -498,41 +570,42 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                     </button>
                   ))}
                 </div>
+                <p className="text-[10px] font-mono text-white/45">
+                  Data dari riwayat tersimpan; tidak perlu alat terhubung.
+                </p>
               </div>
 
-              {/* Form Input Rentang Kustom */}
-              {historyMode === 'custom' && (
-                <div className="p-3 rounded-xl bg-black/30 border border-white/10 flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-mono text-white/60">Dari:</span>
-                    <input
-                      type="datetime-local"
-                      value={customFrom}
-                      onChange={(e) => setCustomFrom(e.target.value)}
-                      aria-label="Dari tanggal dan jam (kustom)"
-                      className="px-2.5 py-1.5 rounded-lg bg-black/40 border border-white/15 text-[11px] font-mono text-white focus:outline-none focus:border-cyan-400"
-                    />
-                  </div>
-                  <span aria-hidden="true" className="text-white/40 text-[11px] font-mono">→</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-mono text-white/60">Sampai:</span>
-                    <input
-                      type="datetime-local"
-                      value={customTo}
-                      onChange={(e) => setCustomTo(e.target.value)}
-                      aria-label="Sampai tanggal dan jam (kustom)"
-                      className="px-2.5 py-1.5 rounded-lg bg-black/40 border border-white/15 text-[11px] font-mono text-white focus:outline-none focus:border-cyan-400"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => applyHistoryRange('custom', customFrom, customTo)}
-                    className="px-3 py-1.5 rounded-lg border border-cyan-400/50 bg-cyan-500/20 text-cyan-200 text-[11px] font-mono font-bold hover:bg-cyan-500/30 cursor-pointer ml-auto"
-                  >
-                    Terapkan Rentang
-                  </button>
+              {/* Rentang kustom: dua input tanggal/jam, terapkan otomatis ber-debounce. */}
+              <div className="p-3 rounded-xl bg-black/30 border border-white/10 flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-mono text-white/60">Dari:</span>
+                  <input
+                    type="datetime-local"
+                    value={customFrom}
+                    onChange={(e) => onCustomInputChange('from', e.target.value)}
+                    aria-label="Dari tanggal dan jam"
+                    className="px-2.5 py-1.5 rounded-lg bg-black/40 border border-white/15 text-[11px] font-mono text-white focus:outline-none focus:border-cyan-400"
+                  />
                 </div>
-              )}
+                <span aria-hidden="true" className="text-white/40 text-[11px] font-mono">→</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-mono text-white/60">Sampai:</span>
+                  <input
+                    type="datetime-local"
+                    value={customTo}
+                    onChange={(e) => onCustomInputChange('to', e.target.value)}
+                    aria-label="Sampai tanggal dan jam"
+                    className="px-2.5 py-1.5 rounded-lg bg-black/40 border border-white/15 text-[11px] font-mono text-white focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => applyHistoryRange('custom', customFromRef.current, customToRef.current)}
+                  className="px-3 py-1.5 min-h-[44px] rounded-lg border border-cyan-400/50 bg-cyan-500/20 text-cyan-200 text-[11px] font-mono font-bold hover:bg-cyan-500/30 cursor-pointer ml-auto"
+                >
+                  Terapkan Rentang
+                </button>
+              </div>
 
               {/* Action Box: Download CSV for this specific range */}
               <div className="p-3 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-slate-900/40 to-teal-950/40 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-3">
@@ -546,7 +619,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                     </span>
                   </div>
                   <p className="text-[10px] font-mono text-white/50 mt-0.5">
-                    {historyMode === '7d' || historyMode === '30d'
+                    {historyMode === '7d' || historyMode === '30d' || historyMode === '1y'
                       ? '⚠️ Rentang panjang memiliki volume data besar. Unduh 1 - 24 jam untuk respon instan.'
                       : 'Unduh file CSV hasil rekaman telemetri sesuai rentang waktu yang sedang dipilih.'}
                   </p>
@@ -563,7 +636,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                     void handleExportCsv(bounds, historyMode);
                   }}
                   disabled={isExporting}
-                  className="px-4 py-2 rounded-xl border border-emerald-400/50 bg-gradient-to-r from-emerald-500/30 to-teal-500/30 hover:from-emerald-500/40 hover:to-teal-500/40 text-emerald-100 text-xs font-mono font-bold flex items-center gap-2 disabled:opacity-50 transition-all cursor-pointer shadow-md shadow-emerald-950/30 shrink-0"
+                  className="px-4 py-2 min-h-[44px] rounded-xl border border-emerald-400/50 bg-gradient-to-r from-emerald-500/30 to-teal-500/30 hover:from-emerald-500/40 hover:to-teal-500/40 text-emerald-100 text-xs font-mono font-bold flex items-center gap-2 disabled:opacity-50 transition-all cursor-pointer shadow-md shadow-emerald-950/30 shrink-0"
                 >
                   {isExporting ? (
                     <>
@@ -647,7 +720,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                         <p className="mt-1 text-[11px] text-white/35">
                           {aboveCount > 0
                             ? 'Data terbaru menunggu giliran di atas watermark.'
-                            : 'Tidak ada riwayat pembacaan dalam rentang ini.'}
+                            : 'Tidak ada riwayat pembacaan dalam rentang ini. Coba preset "Hari Ini" atau perluas rentang di atas.'}
                         </p>
                       </td>
                     </tr>
@@ -703,7 +776,7 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                   onClick={handleHistoryReload}
                   title="Muat ulang halaman ini"
                   aria-label="Muat ulang halaman ini"
-                  className="p-2 rounded-xl bg-white/5 hover:bg-white/15 border border-white/15 text-white/70 hover:text-white text-xs font-mono font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                  className="p-2 min-h-[44px] min-w-[44px] rounded-xl bg-white/5 hover:bg-white/15 border border-white/15 text-white/70 hover:text-white text-xs font-mono font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
                 >
                   <svg className={`w-4 h-4 ${isHistoryLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h5M20 20v-5h-5M5 9a8 8 0 0114-3M19 15a8 8 0 01-14 3" />
@@ -712,14 +785,14 @@ export default function ExportPanel({ chamberId = 'CH-01', activeDeviceId }: Exp
                 <button
                   disabled={historyPage <= 1 || isHistoryLoading}
                   onClick={handleHistoryPrev}
-                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/15 border border-white/15 text-white/80 hover:text-white text-xs font-mono font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                  className="px-4 py-2 min-h-[44px] rounded-xl bg-white/5 hover:bg-white/15 border border-white/15 text-white/80 hover:text-white text-xs font-mono font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
                 >
                   &larr; Kembali
                 </button>
                 <button
                   disabled={!nextCursor || isHistoryLoading}
                   onClick={handleHistoryNext}
-                  className="px-4 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-mono font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                  className="px-4 py-2 min-h-[44px] rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-mono font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
                 >
                   Berikutnya &rarr;
                 </button>

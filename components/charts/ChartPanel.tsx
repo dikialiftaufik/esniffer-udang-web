@@ -249,7 +249,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
             Pergerakan Sensor Gas Aktif
           </h2>
           <span className="text-[10px] font-mono text-white/60 tracking-wider">
-            Telemetri Konsentrasi ADC (Nilai Gas: Raw ADC)
+            Nilai sensor gas mentah (ADC): MQ-137, MQ-136, MQ-4
           </span>
         </div>
 
@@ -260,7 +260,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
               <button
                 key={r}
                 onClick={() => handleRangeChange(r)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+                className={`px-2.5 py-1 min-h-[44px] rounded-lg text-xs font-mono font-bold transition-all ${
                   activeRange === r
                     ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/40 shadow-sm'
                     : 'text-white/50 hover:text-white'
@@ -341,7 +341,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
                 </span>
                 <button
                   onClick={pinToLastData}
-                  className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-white font-mono text-xs"
+                  className="px-3 py-1 min-h-[44px] bg-white/10 hover:bg-white/20 rounded-lg text-white font-mono text-xs"
                 >
                   Tampilkan data terakhir
                 </button>
@@ -403,7 +403,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
                 strokeWidth={2.5}
                 dot={false}
                 activeDot={{ r: 5 }}
-                name="MQ-137 (raw)"
+                name="MQ-137 (mentah)"
                 connectNulls={false}
                 isAnimationActive={false}
               />
@@ -414,7 +414,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
                 strokeWidth={2.5}
                 dot={false}
                 activeDot={{ r: 5 }}
-                name="MQ-136 (raw)"
+                name="MQ-136 (mentah)"
                 connectNulls={false}
                 isAnimationActive={false}
               />
@@ -425,7 +425,7 @@ export default function ChartPanel({ chamberId, lastMeasuredAt = null, streamTic
                 strokeWidth={2.5}
                 dot={false}
                 activeDot={{ r: 5 }}
-                name="MQ-4 (raw)"
+                name="MQ-4 (mentah)"
                 connectNulls={false}
                 isAnimationActive={false}
               />
