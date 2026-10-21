@@ -68,6 +68,15 @@ jobs:
           # ref simbolik seperti refs/remotes/upstream/HEAD).
           git ls-remote --heads upstream | while read -r sha ref; do
             branch="${ref#refs/heads/}"
+
+            # `main` ditangani oleh langkah rebase di atas. Kalau ikut dipush
+            # di sini, commit workflow ini akan tertimpa dan schedule run
+            # berikutnya tidak akan pernah berjalan.
+            if [ "$branch" = "main" ]; then
+              echo "main dilewati (d handled oleh langkah rebase)"
+              continue
+            fi
+
             current="$(git rev-parse --verify --quiet "refs/remotes/origin/$branch" || true)"
 
             if [ -z "$current" ]; then
