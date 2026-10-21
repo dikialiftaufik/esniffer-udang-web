@@ -326,6 +326,34 @@ describe('HTTP API v1: Latest Reading, Keyset History, and Device Audit Tests', 
     assert.ok(body.data.length >= 1, 'Baris lama harus terbaca dengan rentang 6 bulan');
   });
 
+  it('4b-2. Batas rentang dinamis satu tahun kalender: diterima, melebihi 422 (butir 10)', async () => {
+    const to = new Date();
+    const oneYearBack = new Date(to.getTime());
+    oneYearBack.setUTCFullYear(oneYearBack.getUTCFullYear() - 1); // batas kalender dinamis, kabisat aman
+
+    // Tepat satu tahun kalender: diterima (boundary equality).
+    const ok = await getHistoryHandler(
+      new Request(
+        `http://localhost:3000/api/v1/chambers/${chamberCode}/history?from=${oneYearBack.toISOString()}&to=${to.toISOString()}&limit=2`,
+        { method: 'GET', headers: { Cookie: adminCookie } }
+      ),
+      { params: Promise.resolve({ chamberId: chamberCode }) }
+    );
+    assert.strictEqual(ok.status, 200);
+
+    // Dua tahun kalender: melewati batas dinamis → 422.
+    const twoYearsBack = new Date(oneYearBack.getTime());
+    twoYearsBack.setUTCFullYear(twoYearsBack.getUTCFullYear() - 1);
+    const tooFar = await getHistoryHandler(
+      new Request(
+        `http://localhost:3000/api/v1/chambers/${chamberCode}/history?from=${twoYearsBack.toISOString()}&to=${to.toISOString()}&limit=2`,
+        { method: 'GET', headers: { Cookie: adminCookie } }
+      ),
+      { params: Promise.resolve({ chamberId: chamberCode }) }
+    );
+    assert.strictEqual(tooFar.status, 422);
+  });
+
   it('5. Audit Perangkat: GET /api/v1/devices/[deviceId]/readings?quality=UNKNOWN menemukan data tak berwaktu', async () => {
     const req = new Request(`http://localhost:3000/api/v1/devices/${deviceMqttId}/readings?quality=UNKNOWN`, {
       method: 'GET',

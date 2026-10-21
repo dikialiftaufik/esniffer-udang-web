@@ -1,7 +1,7 @@
 import { prisma, getCurrentWatermark } from '../../../../../../lib/db/client.ts';
 import { requireAuth } from '../../../../../../lib/auth/guard.ts';
 import { jsonResponse, errorResponse, getRequestId } from '../../../../../../lib/api/response.ts';
-import { parseLimit, parseIsoDate, validateTimeRange } from '../../../../../../lib/api/validation.ts';
+import { parseLimit, parseIsoDate, validateTimeRangeCalendar } from '../../../../../../lib/api/validation.ts';
 import { notFound, validationError } from '../../../../../../lib/api/errors.ts';
 import {
   encodeCursor,
@@ -84,9 +84,11 @@ export async function GET(
       fromDate = parseIsoDate(rawFrom, 'from', true)!;
       toDate = parseIsoDate(rawTo, 'to', true)!;
       // Revisi putaran 2 butir 10: tabel riwayat mem-filter rentang sampai
-      // satu tahun (dulu 31 hari); paginasi kursor yang sudah ada menahan
+      // satu tahun kalender (dulu 31 hari) — dihitung dinamis dari parameter
+      // `to` dengan aritmetika kalender (tahun kabisat otomatis aman), bukan
+      // konstanta kaku 365/366 hari; paginasi kursor yang sudah ada menahan
       // ukuran tiap halaman.
-      validateTimeRange(fromDate, toDate, 366 * 24 * 60 * 60 * 1000); // Max 366 days
+      validateTimeRangeCalendar(fromDate, toDate, 1);
 
       // Capture snapshot watermark from singleton table — strict, no MAX fallback.
       snapshotWatermark = await getCurrentWatermark();

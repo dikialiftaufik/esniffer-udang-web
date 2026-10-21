@@ -47,6 +47,15 @@ export function parseIsoDate(
   return date;
 }
 
+/** Throws unless `from` is strictly earlier than `to`. */
+function assertFromBeforeTo(from: Date, to: Date): void {
+  if (from.getTime() >= to.getTime()) {
+    throw validationError(
+      `Parameter "from" (${from.toISOString()}) must be strictly earlier than "to" (${to.toISOString()})`
+    );
+  }
+}
+
 /**
  * Validates that `from` is strictly earlier than `to` and within maximum range.
  */
@@ -55,17 +64,35 @@ export function validateTimeRange(
   to: Date,
   maxRangeMs: number = 31 * 24 * 60 * 60 * 1000 // default 31 days
 ): void {
-  if (from.getTime() >= to.getTime()) {
-    throw validationError(
-      `Parameter "from" (${from.toISOString()}) must be strictly earlier than "to" (${to.toISOString()})`
-    );
-  }
+  assertFromBeforeTo(from, to);
 
   const rangeMs = to.getTime() - from.getTime();
   if (rangeMs > maxRangeMs) {
     const days = Math.round(maxRangeMs / (24 * 60 * 60 * 1000));
     throw validationError(
       `Requested time range exceeds maximum allowed limit of ${days} days`
+    );
+  }
+}
+
+/**
+ * Validates that `from` is strictly earlier than `to` and spans at most
+ * `years` calendar year(s). The boundary is derived from `to` with real
+ * calendar arithmetic — a leap day rolls from 29 Feb to 1 Mar automatically —
+ * instead of a fixed millisecond constant such as 365 or 366 days.
+ */
+export function validateTimeRangeCalendar(
+  from: Date,
+  to: Date,
+  years: number = 1
+): void {
+  assertFromBeforeTo(from, to);
+
+  const limit = new Date(to.getTime());
+  limit.setUTCFullYear(limit.getUTCFullYear() - years);
+  if (from.getTime() < limit.getTime()) {
+    throw validationError(
+      `Requested time range exceeds maximum allowed limit of ${years} calendar year(s)`
     );
   }
 }
