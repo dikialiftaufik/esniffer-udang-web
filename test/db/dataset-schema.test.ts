@@ -168,7 +168,16 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
           labWeightAfterG: 476.0,
           sampleShrimpCount: 4,
         },
-      })
+      }),
+      (err: unknown) => {
+        // Presisi: harus check_violation Postgres (23514) yang menyebut nama
+        // constraint ini — penolakan karena aturan lain tidak boleh lolos.
+        const msg = String(err);
+        return (
+          msg.includes('23514') && msg.includes('sample_groups_plain_fridge_no_chamber')
+        );
+      },
+      'Harus ditolak oleh CHECK sample_groups_plain_fridge_no_chamber, bukan error lain'
     );
   });
 
