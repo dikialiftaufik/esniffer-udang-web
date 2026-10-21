@@ -67,3 +67,6 @@ deploy/backups/
 # dataset collection uploads (local multi-file batch photos, PRD §3.1)
 public/uploads/*
 !public/uploads/.gitkeep
+
+# workbook/CSV hasil analisis lokal untuk stakeholder (jangan di-commit)
+/exports/
