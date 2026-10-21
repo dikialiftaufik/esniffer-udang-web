@@ -664,18 +664,31 @@ describe('HTTP API v1: Dataset Batches, Groups, Sessions & Lock (Fase 3)', () =>
       { params: Promise.resolve({ groupId: groupSr }) }
     );
     assert.strictEqual(afterLock.status, 409);
+
+    // Uji penerimaan butir 3: perubahan grup ikut dibekukan — PATCH grup
+    // pada batch terkunci ditolak 409, bukan hanya mutasi POST.
+    const patchLocked = await patchGroup(
+      new Request(`http://localhost:3000/api/v1/groups/${groupSr}`, {
+        method: 'PATCH',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify({ labTempC: 7.7 }),
+      }),
+      { params: Promise.resolve({ groupId: groupSr }) }
+    );
+    assert.strictEqual(patchLocked.status, 409);
   });
 
   it('14. VIEWER ditolak untuk semua mutasi dataset (403)', async () => {
-    for (const [handler, url, params, payload] of [
-      [createGroups, `http://localhost:3000/api/v1/batches/${batchId}/groups`, { batchId }, groupsBody()],
-      [createSession, `http://localhost:3000/api/v1/groups/${groupSr}/sessions`, { groupId: groupSr }, { timepointCode: 'H12', warmupDone: true }],
-      [completeSession, `http://localhost:3000/api/v1/sessions/${sessionH0}/complete`, { sessionId: sessionH0 }, { cleaningDone: true }],
-      [lockBatch, `http://localhost:3000/api/v1/batches/${batchId}/lock`, { batchId }, {}],
+    for (const [method, handler, url, params, payload] of [
+      ['POST', createGroups, `http://localhost:3000/api/v1/batches/${batchId}/groups`, { batchId }, groupsBody()],
+      ['PATCH', patchGroup, `http://localhost:3000/api/v1/groups/${groupSr}`, { groupId: groupSr }, { labTempC: 7.7 }],
+      ['POST', createSession, `http://localhost:3000/api/v1/groups/${groupSr}/sessions`, { groupId: groupSr }, { timepointCode: 'H12', warmupDone: true }],
+      ['POST', completeSession, `http://localhost:3000/api/v1/sessions/${sessionH0}/complete`, { sessionId: sessionH0 }, { cleaningDone: true }],
+      ['POST', lockBatch, `http://localhost:3000/api/v1/batches/${batchId}/lock`, { batchId }, {}],
     ] as const) {
       const res = await (handler as (req: Request, ctx: { params: Promise<object> }) => Promise<Response>)(
         new Request(url, {
-          method: 'POST',
+          method,
           headers: postHeaders(viewerCookie),
           body: JSON.stringify(payload),
         }),
