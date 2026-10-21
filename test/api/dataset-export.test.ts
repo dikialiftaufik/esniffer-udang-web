@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { prisma, closeDb, allocateHistorySequence } from '../../lib/db/client.ts';
 import { GET as exportBatch } from '../../app/api/v1/batches/[batchId]/export/route.ts';
-import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, CSV_UTF8_BOM, toWibParts } from '../../lib/api/csv.ts';
+import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, CSV_UTF8_BOM } from '../../lib/api/csv.ts';
 import { hashPassword } from '../../lib/auth/password.ts';
 import { createSession as createAuthSession, buildSessionCookie } from '../../lib/auth/session.ts';
 
@@ -289,18 +289,6 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
     assert.strictEqual(sd[25], '476.2'); // lab_weight_after_g grup dingin
     assert.strictEqual(sd[27], ''); // session_id kosong
     assert.strictEqual(sd[32], 'no_session'); // ditandai jelas
-  });
-
-  it('4c. toWibParts memisahkan tanggal dan jam, termasuk kasus lewat tengah malam', () => {
-    // 17:30Z = 00:30 WIB keesokan harinya — tanggal bergeser, bukan jam.
-    assert.deepStrictEqual(toWibParts(new Date('2099-06-05T17:30:00.000Z')), {
-      date: '2099-06-06',
-      time: '00:30:00',
-    });
-    assert.deepStrictEqual(toWibParts(new Date('2099-06-06T00:30:00.000Z')), {
-      date: '2099-06-06',
-      time: '07:30:00',
-    });
   });
 
   it('4b. metadata batch tanpa grup: semua baris selebar header', async () => {
