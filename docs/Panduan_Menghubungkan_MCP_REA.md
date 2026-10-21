@@ -18,26 +18,30 @@ aplikasi lain, pahami cara kerjanya sampai level biner, lalu bangun versinya sen
 |---|---|---|
 | Node.js | **v24.22.1** (LTS, memenuhi syarat REA ≥24.11) | `nvm` → `C:\nvm4w\nodejs` |
 | npm | 11.19.1 | ikut Node |
+| REA (CLI global) | 6.7.0 — `rea` siap dipakai tanpa `npx` | `C:\nvm4w\nodejs\node_modules\rea-agents\` |
 | MCP REA (terdaftar) | **aktif global** → dipakai **semua proyek** | `C:\Users\Lenovo\.config\opencode\opencode.json` |
 | Skill REA | **terpasang global** (v42, 207 tool) | `C:\Users\Lenovo\.agents\skills\reverse-engineer-anything\` |
 | Backup config | ada (dibuat otomatis saat setup) | `opencode.json.rea.backup` |
-| Bukti fungsi | handshake MCP **OK** — server `rea 6.7.0`, **214 tool** terdaftar | `rea doctor` → `healthy: true` |
+| Bukti fungsi | handshake MCP **OK** — server `rea 6.7.0`, **214 tool**; `opencode mcp list` → `✓ rea connected` | `rea doctor` → `healthy: true` |
 
-Entry yang ditulis REA ke config global OpenCode:
+Entry yang dipakai di config global OpenCode (lihat §7 kenapa bentuk ini):
 
 ```json
 "rea": {
   "type": "local",
-  "command": ["cmd.exe", "/d", "/c", "npx", "-y", "rea-agents@6.7.0", "mcp"]
+  "command": [
+    "C:\\nvm4w\\nodejs\\node.exe",
+    "C:\\nvm4w\\nodejs\\node_modules\\rea-agents\\scripts\\rea.mjs",
+    "mcp"
+  ],
+  "timeout": { "startup": 60000, "catalog": 60000, "execution": 300000 }
 }
 ```
 
-**Yang perlu Anda lakukan sekarang: restart OpenCode** (tutup & buka ulang). MCP dan skill hanya dibaca
-saat klien mulai, jadi sesi yang sedang berjalan belum melihat REA.
-
-> **Penting untuk्डpemula:** `npx` berarti "jalankan paket ini dari internet saat dibutuhkan" — jadi
->|first kali| koneksi perlu internet dan butuh ±30–60 detik. Setelah paket ter-cache di
-> `npm cache`, pemanggilan berikutnya jauh lebih cepat.
+> **Penting untuk pemula:** `npx` berarti "jalankan paket ini dari internet saat dibutuhkan" — koneksi
+> pertama perlu internet dan bisa memakan 30–60 detik. Setelah paket ter-cache di `npm cache`, pemanggilan
+> berikutnya jauh lebih cepat. Karena opencode punya batas waktu handshake MCP yang ketat (§7), **lebih
+> baik arahkan ke launcher absolut** (dipasang global) daripada `npx`/`uvx`.
 
 ---
 
@@ -192,21 +196,33 @@ tambahkan entri berikut.
     "servers": {
       "rea": {
         "type": "local",
-        "command": ["cmd.exe", "/d", "/c", "npx", "-y", "rea-agents@6.7.0", "mcp"]
+        "command": [
+          "C:\\nvm4w\\nodejs\\node.exe",
+          "C:\\nvm4w\\nodejs\\node_modules\\rea-agents\\scripts\\rea.mjs",
+          "mcp"
+        ],
+        "timeout": { "startup": 60000, "catalog": 60000, "execution": 300000 }
       }
     }
   }
 }
 ```
 
-Di macOS/Linux, perintahnya tanpa `cmd.exe`:
+Di macOS/Linux, perintahnya tanpa `cmd.exe` dan tanpa path Windows:
 
 ```json
-"command": ["npx", "-y", "rea-agents@6.7.0", "mcp"]
+"command": ["/usr/local/bin/node", "/usr/local/lib/node_modules/rea-agents/scripts/rea.mjs", "mcp"]
 ```
 
 > Kenapa `cmd.exe /d /c` di Windows? Program stdio di Windows perlu "shim" `cmd.exe` agar pipe
 > stdin/stdout diteruskan utuh ke proses anak. Tanpa itu, MCP sering menampakkan "server tidak merespons".
+> Tapi kalau REA sudah dipasang global (`npm install --global rea-agents`), **lebih baik arahkan ke
+> `node` + `scripts/rea.mjs`**: tanpa `npx`, tanpa resolusi paket, start lebih cepat (terukur 3,4 dtk
+> vs 6,8 dtk lewat `npx`) — dan itu penting karena opencode punya batas handshake MCP hanya 5 detik
+> secara bawaan (§7).
+>
+> Bentuk `timeout` di atas (objek) adalah bentuk **native** yang dipakai opencode versi ini. Bentuk
+> angka (`"timeout": 60000`) ditolak runtime dan entry-nya **dibuang diam-diam** (lihat §7).
 
 **Claude Code** (per proyek, tanpa skill):
 
@@ -316,6 +332,52 @@ Hasil di mesin ini: `doctor` → `healthy: true` (untuk scope opencode+skill), h
 analisis native (Ghidra/IDA/JADX/Kuna) yang memang belum dipasang; fitur tanpa mesin analisis tetap
 normal.
 
+### 7.1 "MCP Failed" — penyebab, bukti, dan cara memastikan
+
+Di panel OpenCode, server yang gagal start tampil **merah** dengan keterangan `failed: Request timed
+out`. Ini **bukan** berarti paketnya rusak — opencode punya **batas handshake MCP hanya 5 detik**
+(`timeout` bawaan), dan server yang start lebih lambat akan kalah balapan. Terukur di mesin ini:
+
+| Server | Cara start | Waktu handshake | Hasil |
+|---|---|---|---|
+| REA | `npx -y rea-agents@6.7.0 mcp` | **6,8 dtk** | ✗ gagal (timeout) |
+| REA | `node …\rea-agents\scripts\rea.mjs mcp` (global) | **3,4 dtk** | ✓ |
+| excel | `uvx excel-mcp-server stdio …` | **12,1 dtk** | ✗ gagal (timeout) |
+| excel | `…\.local\bin\excel-mcp-server.exe stdio …` (tool uv) | **11,4 dtk** | ✓ (dengan timeout dinaikkan) |
+
+Tiga perbaikannya (berurutan dari yang palingatel):
+
+1. **Naikkan anggaran waktu** — di config, per server:
+   ```json
+   "timeout": { "startup": 60000, "catalog": 60000, "execution": 300000 }
+   ```
+   `startup` = bolehnya server menjawab handshake; `catalog` = bolehnya katalog tool diambil; `execution` =
+   bolehnya satu panggilan tool berjalan. **Perhatikan:** runtime opencode terpasang **menolak**
+   `timeout` berbentuk angka (`"timeout": 60000`) — entri lalu dibuang diam-diam dan server **tidak muncul
+   sama sekali** di daftar (bukan "failed"). Bentuk objek di atas yang benar.
+2. **Pakai launcher absolut, bukan `npx`/`uvx`** — pasang paketnya sekali
+   (`npm install --global rea-agents`, `uv tool install excel-mcp-server`), lalu arahkan `command` ke
+   executable/launernya. Tidak ada resolusi paket, tidak ada jaringan saat start.
+3. **Verifikasi dengan alat, bukan mata**:
+   ```powershell
+   # status semua server (versi desktop: "connected" / "failed" / "pending")
+   & "$env:LOCALAPPDATA\Programs\@opencodedesktop\resources\opencode-cli.exe" mcp list
+
+   # log normalisasi config: látak entri yang DIBUANG karena tidak valid
+   Select-String -Path "$env:USERPROFILE\.local\share\opencode\log\opencode.log" `
+     -Pattern "configuration normalization diagnostic" | Select-Object -Last 8
+   ```
+   Kata kunci di log yang penting:
+   - `kind=invalid action="skipped malformed recognized value"` → **entri ditolak** (bentuk `timeout`
+     salah, atau field tak dikenal) → server tidak akan pernah muncul.
+   - `kind=conflict action="retained native value over legacy value"` → **normal**: config punya entri di
+     `mcp.servers.<nama>` (native) dan `mcp.<nama>` (legacy); yang native dipakai.
+   - `mcp connect failed … status.error="Request timed out"` → server kalah balapan handshake 5 detik.
+
+   > **Catatan:** `opencode mcp list` yang dijalankan dari terminal punya anggaran lebih pendek daripada
+   > aplikasinya, jadi server lambat bisa tampil **"pending"** di CLI padahal di aplikasi sudah
+   > terhubung. Yang otoritatif adalah panel OpenCode dan log di atas.
+
 ---
 
 ## 8. Contoh nyata untuk proyek `esniffer-udang-web`
@@ -391,12 +453,14 @@ rea uninstall --purge-data     # sekaligus hapus cache/state di ~/.rea
 
 | Gejala | Penyebab | Solusi |
 |---|---|---|
+| Panel OpenCode: MCP **Failed — Request timed out** | opencode punya batas handshake MCP **5 detik**; server yang start >5 detik kalah | naikkan `timeout` per server (§7.1) + arahkan `command` ke launcher absolut (bukan `npx`/`uvx`) |
+| Server **tidak muncul sama sekali** di daftar MCP | entri ditolak parser: `timeout` numerik ditolak, bentuk yang benar objek `{startup, catalog, execution}` | ubah `timeout` ke objek; cek log: `kind=invalid action="skipped malformed recognized value"` |
 | `setup`/`rea` gagal: "Node.js version not supported" | Node < 22.19 / < 24.11 | `nvm install 24.22.1` + `nvm use 24.22.1` |
 | Tool REA tidak muncul di sesi | klien belum restart, atau konfigurasi belum tersimpan | tutup & buka ulang klien; `doctor --client opencode --json` |
-| "server tidak merespons" saat start | pipe stdio tidak diteruskan di Windows | pakai `cmd.exe /d /c npx …` (REE menulis command itu sendiri saat setup) |
+| "server tidak merespons" saat start | pipe stdio tidak diteruskan di Windows | pakai `cmd.exe /d /c npx …` (setup menulis command itu sendiri) |
 | `npx` sangat lambat / timeout | paket belum ter-cache & koneksi lambat | jalankan sekali manual `npx -y rea-agents@6.7.0 --help`; atau `npm i -g rea-agents` lalu pakai `rea` |
 | "malformed configuration" saat setup | config klien berisi komentar/koma/trailing/BOM | repair file ke JSON polos, ulangi setup |
-| Katalog tool terlalu besar untuk model | 214 tool/schema penuh | set `REA_MCP_INPUT_SCHEMA_PROFILE=compact` di `env` entri MCP; restart klien |
+| Katalog tool terlalu besar untuk model | 214 tool/schema penuh | set `REA_MCP_INPUT_SCHEMA_PROFILE=compact` di `environment` entri MCP; restart klien |
 | `capability_unavailable` saat analisis native | Ghidra/Hopper/IDA belum ada | `rea doctor --provider ghidra --json`; pasang Ghidra 12.1.x + JDK 21, set `GHIDRA_INSTALL_DIR` & `JAVA_HOME` |
 | Analisis APK gagal | JADX headless + JDK penuh belum ada | set `REA_JADX_MCP_JAR` ke path absolut JAR `jadx-headless-mcp 0.7.1` |
 | Error `ps` tidak ditemukan (Linux) | procps belum terpasang | `sudo apt install procps` (Linux saja) |
