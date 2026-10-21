@@ -5,6 +5,7 @@ import {
   loadBatchDraft,
   removeBatchDraft,
   draftMeaningful,
+  DRAFT_MAX_AGE_MS,
   type BatchDraft,
 } from '../lib/batch-draft.ts';
 
@@ -24,6 +25,8 @@ class MemoryStorage {
     this.map.clear();
   }
 }
+
+const DRAFT_KEY = 'esniffer:batch-draft-v2';
 
 describe('Batch draft (revisi putaran 2, butir 13)', () => {
   const before = globalThis.localStorage;
@@ -47,15 +50,33 @@ describe('Batch draft (revisi putaran 2, butir 13)', () => {
 
   it('simpan lalu muat kembali mengembalikan nilai yang sama', () => {
     saveBatchDraft(filled);
-    assert.deepEqual(loadBatchDraft(), filled);
+    const loaded = loadBatchDraft();
+    assert.ok(loaded);
+    assert.strictEqual(loaded.marketSource, filled.marketSource);
+    assert.strictEqual(loaded.shrimpCount, filled.shrimpCount);
+    assert.strictEqual(loaded.coolerLab, filled.coolerLab);
+    assert.strictEqual(loaded.step, filled.step);
   });
 
-  it('draf bermakna bila ada ketikan nyata; hanya waktu otomatis tidak dihitung', () => {
+  it('penyimpan menandai cap waktu sehingga umur draf bisa dinilai', () => {
+    saveBatchDraft(filled);
+    const loaded = loadBatchDraft();
+    assert.strictEqual(typeof loaded?.savedAt, 'number');
+    assert.ok(Math.abs(Date.now() - (loaded?.savedAt ?? 0)) < 5_000);
+  });
+
+  it('draf bermakna bila ada ketikan nyata; nilai bawaan dan waktu otomatis tidak dihitung', () => {
     assert.ok(draftMeaningful(filled));
     // Waktu dari jam device selalu terisi otomatis — bukan tanda user mengetik.
     assert.strictEqual(draftMeaningful({ procuredAt: '2099-02-02T07:00', arrivedAt: '2099-02-02T07:10' }), false);
     assert.strictEqual(draftMeaningful({ step: 2, groupSr: { labTempC: '6.5' } }), false);
     assert.strictEqual(draftMeaningful({}), false);
+    // Nilai bawaan form juga bukan isian pengguna.
+    assert.strictEqual(
+      draftMeaningful({ sourceType: 'market', shrimpCount: '12', initialCondition: 'dead' }),
+      false
+    );
+    assert.ok(draftMeaningful({ sourceType: 'supermarket' }));
   });
 
   it('simpan draf kosong menghapus penyimpanan lama', () => {
@@ -72,8 +93,64 @@ describe('Batch draft (revisi putaran 2, butir 13)', () => {
   });
 
   it('JSON rusak di penyimpanan mengembalikan null tanpa melempar', () => {
-    globalThis.localStorage.setItem('esniffer:batch-draft-v1', '{teu lengkap');
+    globalThis.localStorage.setItem(DRAFT_KEY, '{teu lengkap');
     assert.strictEqual(loadBatchDraft(), null);
+  });
+
+  it('draf versi kunci lama diabaikan, bukan dibaca bentrok', () => {
+    globalThis.localStorage.setItem(
+      'esniffer:batch-draft-v1',
+      JSON.stringify({ marketSource: 'Pasar Versi Lama', savedAt: Date.now() })
+    );
+    assert.strictEqual(loadBatchDraft(), null);
+  });
+
+  it('draf tanpa cap waktu (skema lama) dibuang saat dimuat', () => {
+    globalThis.localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({ marketSource: 'Pasar Tanpa Cap Waktu' })
+    );
+    assert.strictEqual(loadBatchDraft(), null);
+    // Sekalian hilang dari penyimpanan.
+    assert.strictEqual(globalThis.localStorage.getItem(DRAFT_KEY), null);
+  });
+
+  it('draf kedaluwarsa dibuang; draf yang masih muda dikembalikan', () => {
+    globalThis.localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({ marketSource: 'Pasar Lama', savedAt: Date.now() - DRAFT_MAX_AGE_MS - 1000 })
+    );
+    assert.strictEqual(loadBatchDraft(), null);
+    assert.strictEqual(globalThis.localStorage.getItem(DRAFT_KEY), null);
+
+    globalThis.localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({ marketSource: 'Pasar Baru', savedAt: Date.now() - 1000 })
+    );
+    assert.strictEqual(loadBatchDraft()?.marketSource, 'Pasar Baru');
+  });
+
+  it('draf milik pengguna lain diabaikan dan tidak dihapus', () => {
+    saveBatchDraft({ ...filled, userId: 'user-a' });
+    assert.strictEqual(loadBatchDraft('user-a')?.marketSource, filled.marketSource);
+    assert.strictEqual(loadBatchDraft('user-b'), null);
+    // Draf pemilik asli masih utuh.
+    assert.strictEqual(loadBatchDraft('user-a')?.marketSource, filled.marketSource);
+  });
+
+  it('caption foto ikut tersimpan tanpa berkas foto', () => {
+    saveBatchDraft({
+      ...filled,
+      batchCaptions: ['Di pasar'],
+      groupCaptionsSr: ['Di chamber'],
+      groupCaptionsSd: [],
+    });
+    const loaded = loadBatchDraft();
+    assert.deepStrictEqual(loaded?.batchCaptions, ['Di pasar']);
+    assert.deepStrictEqual(loaded?.groupCaptionsSr, ['Di chamber']);
+    assert.strictEqual(loaded?.groupCaptionsSd?.length, 0);
+    // Tidak ada berkas foto di draf.
+    assert.strictEqual((loaded as Record<string, unknown> | null)?.files, undefined);
   });
 
   it('localStorage tidak tersedia: semua operasi aman', () => {

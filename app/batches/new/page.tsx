@@ -10,13 +10,19 @@ import {
   draftMeaningful,
 } from '../../../lib/batch-draft.ts';
 import {
-  isProcurementWindow,
-  isColdChainCompliant,
-  transportDurationMs,
-  wibInputToUtc,
   MAX_PHOTO_CAPTION_LENGTH,
-  DatasetValidationError,
+  formatWibDateTime,
+  wibDateTimeLocal,
 } from '../../../shared/dataset.ts';
+import {
+  parseWibInput,
+  stepOfField,
+  validateGroupForm,
+  validateStepA as validateWizardStepA,
+  validateStepB as validateWizardStepB,
+  wibInputToUtcIso,
+  type WizardErrors,
+} from '../../../lib/batch-wizard.ts';
 import SuccessNotice, { useSuccessNotice } from '../../../components/ui/SuccessNotice';
 
 const fieldCls = 'flex flex-col gap-1.5';
@@ -39,9 +45,9 @@ const btnPrimary =
 const btnBack =
   'flex-1 py-3 rounded-xl bg-transparent hover:bg-white/10 border border-white/15 text-white/70 text-sm font-mono font-bold transition-colors touch-manipulation disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40';
 const stepBtn =
-  'flex-1 px-2 py-2.5 rounded-xl font-mono text-xs font-bold border transition-colors touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60';
+  'flex-1 px-2 py-2.5 min-h-[44px] rounded-xl font-mono text-xs font-bold border transition-colors touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60';
 const btnGhost =
-  'px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/15 text-white/60 hover:text-white text-[11px] font-mono transition-colors touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40';
+  'px-3 py-1.5 min-h-[44px] rounded-lg bg-white/5 hover:bg-white/10 border border-white/15 text-white/60 hover:text-white text-[11px] font-mono transition-colors touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40';
 
 // Alat bantu tes fitur: isi otomatis seluruh form dengan nilai realistis.
 // Matikan (ganti ke false) saat pengujian sesungguhnya agar tombolnya
@@ -66,6 +72,65 @@ const emptyGroup = (): GroupForm => ({
   sampleShrimpCount: '4',
   coldStorageMode: 'chamber',
 });
+
+/** Jeda penulisan draf setelah isian terakhir (ms). */
+const DRAFT_SAVE_DEBOUNCE_MS = 800;
+
+/** Keadaan form yang disimpan sebagai draf. */
+interface DraftState {
+  step: number;
+  procuredAt: string;
+  arrivedAt: string;
+  marketSource: string;
+  sourceType: string;
+  shrimpCount: string;
+  shrimpLengthCm: string;
+  totalWeightG: string;
+  initialCondition: string;
+  initialTempC: string;
+  coolerMarket: string;
+  coolerLab: string;
+  deviationAck: boolean;
+  groupSR: GroupForm;
+  groupSD: GroupForm;
+  batchCaptions: string[];
+  groupCaptionsSr: string[];
+  groupCaptionsSd: string[];
+}
+
+/** True bila form masih pada nilai bawaan (waktu otomatis jam device diabaikan). */
+const formIsPristine = (s: DraftState): boolean => {
+  const groupPristine = (g: GroupForm): boolean =>
+    g.labTempC.trim() === '' &&
+    g.visualCheck === 'normal' &&
+    g.labWeightBeforeG.trim() === '' &&
+    g.labWeightAfterG.trim() === '' &&
+    g.sampleShrimpCount === '4' &&
+    g.coldStorageMode === 'chamber';
+  return (
+    s.marketSource.trim() === '' &&
+    s.sourceType === 'market' &&
+    s.shrimpCount === '12' &&
+    s.shrimpLengthCm.trim() === '' &&
+    s.totalWeightG.trim() === '' &&
+    s.initialCondition === 'dead' &&
+    s.initialTempC.trim() === '' &&
+    s.coolerMarket.trim() === '' &&
+    s.coolerLab.trim() === '' &&
+    !s.deviationAck &&
+    groupPristine(s.groupSR) &&
+    groupPristine(s.groupSD) &&
+    s.batchCaptions.every((c) => c.trim() === '') &&
+    s.groupCaptionsSr.every((c) => c.trim() === '') &&
+    s.groupCaptionsSd.every((c) => c.trim() === '')
+  );
+};
+
+/** Ambil daftar caption yang utuh dari draf; bentuk rusak diabaikan. */
+const captionList = (saved: unknown): string[] =>
+  Array.isArray(saved)
+    ? saved.filter((c): c is string => typeof c === 'string')
+    : [];
 
 /** Bangun ulang form grup dari draf tersimpan; nilai tak dikenal diabaikan. */
 const groupFromDraft = (saved: unknown): GroupForm => {
@@ -96,7 +161,9 @@ const emptyPhotoGroup = (): PhotoGroup => ({ files: [], captions: [] });
 const photoFileCls =
   'text-xs font-mono text-white/60 file:mr-2 file:px-3 file:py-1.5 file:rounded-lg file:bg-white/10 file:border file:border-white/10 file:text-white/80 file:text-xs file:font-mono';
 const photoRemoveCls =
-  'absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-rose-500/90 text-white text-[10px] font-bold leading-none hover:bg-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200';
+  // 32px: tombol hapus menempel di sudut pratinjau — 44px akan menutupi thumbnail
+  // tetangga; 32px masih memenuhi WCAG 2.5.8 (target minimal 24px).
+  'absolute -top-2 -right-2 w-8 h-8 rounded-full bg-rose-500/90 text-white text-[12px] font-bold leading-none flex items-center justify-center hover:bg-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200';
 
 /**
  * Pemilih foto wizard (butir 2): mengelola pratinjaunya sendiri lalu melapor
@@ -222,35 +289,17 @@ function PhotosBlock({
 
 const durationFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
 
-type Errors = Record<string, string>;
+type Errors = WizardErrors;
 
-const toNum = (v: string): number | null => {
-  if (v.trim() === '') return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : NaN;
-};
+/** Fetch ber-CSRF milik sesi; diteruskan dari AuthProvider. */
+type ApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-/** Format jam device ke nilai `datetime-local` (YYYY-MM-DDTHH:mm). */
-const toLocalInput = (d: Date): string => {
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-
-function parseWib(value: string): { date?: Date; error?: string } {
-  if (value.trim() === '') return { error: 'Wajib diisi.' };
-  try {
-    return { date: wibInputToUtc(value.replace('T', ' ')) };
-  } catch (err) {
-    return { error: err instanceof DatasetValidationError ? 'Format tanggal tidak valid.' : 'Format tanggal tidak valid.' };
-  }
-}
-
-export default function NewBatchPage() {
-  const { user, isLoading, apiFetch } = useAuth();
+function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFetch }) {
   const router = useRouter();
-  // Butir 13: muat draf sekali; nilai awal tiap field kembali dari sini.
-  const draft = useMemo(() => loadBatchDraft() ?? {}, []);
-  const [draftRestored, setDraftRestored] = useState(() => draftMeaningful(draft));
+  // Butir 13: draf dibaca sekali saat form dimuat — draf milik akun lain
+  // diabaikan oleh lib, draf kedaluwarsa dibuang.
+  const draft = useMemo(() => loadBatchDraft(userId) ?? {}, [userId]);
+  const [draftDismissed, setDraftDismissed] = useState(false);
   const skipDraftSave = useRef(false);
   /** Nilai teks dari draf bila bentuknya cocok — draf rusak aman diabaikan. */
   const str = (v: unknown, fallback: string): string => (typeof v === 'string' ? v : fallback);
@@ -267,7 +316,9 @@ export default function NewBatchPage() {
   // Butir 5: kedua waktu mulai terisi dari jam device (peramban) saat halaman
   // dibuka; tetap dapat diedit manual sebelum disimpan. Lazy initializer —
   // jam device bukan state eksternal yang perlu disinkronkan lewat effect.
-  const [procuredAt, setProcuredAt] = useState(() => str(draft.procuredAt, toLocalInput(new Date())));
+  const [procuredAt, setProcuredAt] = useState(() =>
+    str(draft.procuredAt, wibDateTimeLocal(new Date()))
+  );
   const [marketSource, setMarketSource] = useState(() => str(draft.marketSource, ''));
   const [sourceType, setSourceType] = useState(() => str(draft.sourceType, 'market'));
   const [shrimpCount, setShrimpCount] = useState(() => str(draft.shrimpCount, '12'));
@@ -275,34 +326,56 @@ export default function NewBatchPage() {
   const [totalWeightG, setTotalWeightG] = useState(() => str(draft.totalWeightG, ''));
   const [initialCondition, setInitialCondition] = useState(() => str(draft.initialCondition, 'dead'));
   const [initialTempC, setInitialTempC] = useState(() => str(draft.initialTempC, ''));
-  // Tahap A — pengadaan (termasuk cool box dan tiba, pindahan tahap B)
-  const [arrivedAt, setArrivedAt] = useState(() => str(draft.arrivedAt, toLocalInput(new Date())));
+  // Tahap A — pengadaan: beli, tiba, sumber (butir 12).
+  const [arrivedAt, setArrivedAt] = useState(() =>
+    str(draft.arrivedAt, wibDateTimeLocal(new Date()))
+  );
   // Butir 7: dua suhu cool box yang berbeda makna — saat di pasar (tercatat
   // lama diDB sebagai cooler_temp_min_c) dan saat di lab (cooler_temp_max_c).
   const [coolerMarket, setCoolerMarket] = useState(() => str(draft.coolerMarket, ''));
   const [coolerLab, setCoolerLab] = useState(() => str(draft.coolerLab, ''));
-  const [deviationAck, setDeviationAck] = useState(() =>
-    typeof draft.deviationAck === 'boolean' ? draft.deviationAck : false
+  const [deviationAck, setDeviationAck] = useState(
+    () => (typeof draft.deviationAck === 'boolean' ? draft.deviationAck : false)
   );
-  // Foto kondisi awal (diunggah setelah batch dibuat)
-  const [batchPhotos, setBatchPhotos] = useState<PhotoGroup>(emptyPhotoGroup);
+  // Foto kondisi awal (diunggah setelah batch dibuat). Berkas foto tidak ikut
+  // draf; captionnya dipertahankan agar tidak perlu diketik ulang.
+  const [batchPhotos, setBatchPhotos] = useState<PhotoGroup>(() => ({
+    ...emptyPhotoGroup(),
+    captions: captionList(draft.batchCaptions),
+  }));
   const [groupPhotos, setGroupPhotos] = useState<{ sr: PhotoGroup; sd: PhotoGroup }>({
-    sr: emptyPhotoGroup(),
-    sd: emptyPhotoGroup(),
+    sr: { ...emptyPhotoGroup(), captions: captionList(draft.groupCaptionsSr) },
+    sd: { ...emptyPhotoGroup(), captions: captionList(draft.groupCaptionsSd) },
   });
   const [createdBatchId, setCreatedBatchId] = useState<string | null>(null);
   // Tahap C — grup SR/SD (nilai awal dari draf bila ada)
   const [groupSR, setGroupSR] = useState<GroupForm>(() => groupFromDraft(draft.groupSr));
   const [groupSD, setGroupSD] = useState<GroupForm>(() => groupFromDraft(draft.groupSd));
 
-  // Butir 13: autosave draf pada tiap perubahan form (foto tidak ikut).
+  /** Caption foto yang tersimpan di draf — ditampilkan di banner pemulihan. */
+  const restoredCaptions = useMemo(
+    () =>
+      [draft.batchCaptions, draft.groupCaptionsSr, draft.groupCaptionsSd]
+        .flatMap((c) => captionList(c))
+        .filter((c) => c.trim() !== ''),
+    [draft]
+  );
+
+  // Butir 13: autosave draf dengan debounce — satu tulis beberapa detik
+  // setelah isian terakhir, bukan satu tulis per ketikan. Run pertama
+  // dilewati: draf hanya dibuat setelah pengguna menyentuh form.
+  const firstDraftRun = useRef(true);
   useEffect(() => {
+    if (firstDraftRun.current) {
+      firstDraftRun.current = false;
+      return;
+    }
     if (skipDraftSave.current) {
       // Baru saja buang draf: jangan langsung tulis ulang isinya.
       skipDraftSave.current = false;
       return;
     }
-    saveBatchDraft({
+    const state: DraftState = {
       step,
       procuredAt,
       arrivedAt,
@@ -316,9 +389,41 @@ export default function NewBatchPage() {
       coolerMarket,
       coolerLab,
       deviationAck,
-      groupSr: groupSR,
-      groupSd: groupSD,
-    });
+      groupSR,
+      groupSD,
+      batchCaptions: batchPhotos.captions,
+      groupCaptionsSr: groupPhotos.sr.captions,
+      groupCaptionsSd: groupPhotos.sd.captions,
+    };
+    const timer = setTimeout(() => {
+      if (formIsPristine(state)) {
+        // Form kembali ke nilai bawaan — tak ada yang perlu disimpan.
+        removeBatchDraft();
+        return;
+      }
+      saveBatchDraft({
+        step,
+        procuredAt,
+        arrivedAt,
+        marketSource,
+        sourceType,
+        shrimpCount,
+        shrimpLengthCm,
+        totalWeightG,
+        initialCondition,
+        initialTempC,
+        coolerMarket,
+        coolerLab,
+        deviationAck,
+        groupSr: groupSR,
+        groupSd: groupSD,
+        userId,
+        batchCaptions: batchPhotos.captions,
+        groupCaptionsSr: groupPhotos.sr.captions,
+        groupCaptionsSd: groupPhotos.sd.captions,
+      });
+    }, DRAFT_SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
   }, [
     step,
     procuredAt,
@@ -335,6 +440,10 @@ export default function NewBatchPage() {
     deviationAck,
     groupSR,
     groupSD,
+    batchPhotos.captions,
+    groupPhotos.sr.captions,
+    groupPhotos.sd.captions,
+    userId,
   ]);
 
   const setSR = (v: GroupForm) => {
@@ -356,12 +465,13 @@ export default function NewBatchPage() {
    */
   /** Butir 13: buang draf tersimpan dan kembalikan form ke nilai awal. */
   const discardDraft = () => {
+    const now = wibDateTimeLocal(new Date());
     removeBatchDraft();
     skipDraftSave.current = true;
-    setDraftRestored(false);
+    setDraftDismissed(true);
     setStep(0);
-    setProcuredAt(toLocalInput(new Date()));
-    setArrivedAt(toLocalInput(new Date()));
+    setProcuredAt(now);
+    setArrivedAt(now);
     setMarketSource('');
     setSourceType('market');
     setShrimpCount('12');
@@ -422,150 +532,39 @@ export default function NewBatchPage() {
   };
 
   useEffect(() => {
-    if (!isLoading && (!user || user.role !== 'ADMIN')) {
-      router.replace(user ? '/batches' : '/login');
-    }
-  }, [isLoading, user, router]);
-
-  useEffect(() => {
     if (error) {
       errorRef.current?.focus();
     }
   }, [error]);
 
-  const durationHours =
-    procuredAt && arrivedAt
-      ? (new Date(arrivedAt).getTime() - new Date(procuredAt).getTime()) / 3_600_000
-      : null;
+  // Durasi dihitung dari nilai WIB yang sama dengan yang divalidasi dan disimpan.
+  const durationHours = (() => {
+    const proc = parseWibInput(procuredAt);
+    const arr = parseWibInput(arrivedAt);
+    if (!proc.date || !arr.date) return null;
+    return (arr.date.getTime() - proc.date.getTime()) / 3_600_000;
+  })();
   const overDuration = durationHours !== null && durationHours > 3;
 
   // ---------- validasi per tahap (cermin server, pesan Indonesia) ----------
+  // Aturannya tinggal di lib/batch-wizard.ts: fungsi murni yang punya test unit.
 
-  const validateStepA = (): Errors => {
-    const e: Errors = {};
-    const proc = parseWib(procuredAt);
-    if (proc.error) {
-      e.procuredAt = proc.error;
-    } else if (!isProcurementWindow(proc.date!)) {
-      e.procuredAt = 'Harus pagi 06:00–08:00 WIB (Anda mengisi jam di luar jendela).';
-    }
-    if (marketSource.trim() === '') {
-      e.marketSource = 'Wajib diisi.';
-    } else if (marketSource.trim().length > 100) {
-      e.marketSource = 'Maksimal 100 karakter.';
-    }
-    const count = toNum(shrimpCount);
-    if (count === null) {
-      e.shrimpCount = 'Wajib diisi.';
-    } else if (!Number.isInteger(count) || count < 10) {
-      e.shrimpCount = 'Minimal 10 ekor (bilangan bulat).';
-    }
-    const len = toNum(shrimpLengthCm);
-    if (len === null) {
-      e.shrimpLengthCm = 'Wajib diisi.';
-    } else if (!(len >= 1 && len <= 50)) {
-      e.shrimpLengthCm = 'Harus 1 sampai 50 cm.';
-    }
-    const w = toNum(totalWeightG);
-    if (w === null) {
-      e.totalWeightG = 'Wajib diisi.';
-    } else if (!(w > 0) || w > 2000) {
-      e.totalWeightG = 'Harus lebih dari 0 sampai 2000 gram.';
-    }
-    const t = toNum(initialTempC);
-    if (t === null) {
-      e.initialTempC = 'Wajib diisi.';
-    } else if (t < -2 || t > 30) {
-      e.initialTempC = 'Harus -2 sampai 30 °C.';
-    }
-    // Tiba di lab: beli harus sebelum tiba; durasi menentukan aturan deviasi.
-    const arr = parseWib(arrivedAt);
-    if (arr.error) {
-      e.arrivedAt = arr.error;
-    } else {
-      const proc = parseWib(procuredAt);
-      if (!proc.error && transportDurationMs(proc.date!, arr.date!) <= 0) {
-        e.arrivedAt = 'Tanggal dan jam tiba harus setelah tanggal dan jam beli.';
-      } else if (!proc.error && !isColdChainCompliant(proc.date!, arr.date!) && !deviationAck) {
-        e.arrivedAt = 'Melebihi 3 jam — centang deviasi di bawah untuk lanjut.';
-      }
-    }
-    return e;
-  };
+  const validateStepA = (): Errors =>
+    validateWizardStepA({ procuredAt, arrivedAt, marketSource, deviationAck });
 
   // Tahap B — kondisi udang, cool box, dan foto dokumentasi (butir 12).
-  const validateStepB = (): Errors => {
-    const e: Errors = {};
-    const count = toNum(shrimpCount);
-    if (count === null) {
-      e.shrimpCount = 'Wajib diisi.';
-    } else if (!Number.isInteger(count) || count < 10) {
-      e.shrimpCount = 'Minimal 10 ekor (bilangan bulat).';
-    }
-    const len = toNum(shrimpLengthCm);
-    if (len === null) {
-      e.shrimpLengthCm = 'Wajib diisi.';
-    } else if (!(len >= 1 && len <= 50)) {
-      e.shrimpLengthCm = 'Harus 1 sampai 50 cm.';
-    }
-    const w = toNum(totalWeightG);
-    if (w === null) {
-      e.totalWeightG = 'Wajib diisi.';
-    } else if (!(w > 0) || w > 2000) {
-      e.totalWeightG = 'Harus lebih dari 0 sampai 2000 gram.';
-    }
-    const t = toNum(initialTempC);
-    if (t === null) {
-      e.initialTempC = 'Wajib diisi.';
-    } else if (t < -2 || t > 30) {
-      e.initialTempC = 'Harus -2 sampai 30 °C.';
-    }
-    const cmarket = toNum(coolerMarket);
-    if (cmarket === null) {
-      e.coolerMarket = 'Wajib diisi.';
-    } else if (cmarket < 0 || cmarket > 4) {
-      e.coolerMarket = 'Harus 0–4 °C.';
-    }
-    const clab = toNum(coolerLab);
-    if (clab === null) {
-      e.coolerLab = 'Wajib diisi.';
-    } else if (clab < 0 || clab > 4) {
-      e.coolerLab = 'Harus 0–4 °C.';
-    }
-    return e;
-  };
+  const validateStepB = (): Errors =>
+    validateWizardStepB({
+      shrimpCount,
+      shrimpLengthCm,
+      totalWeightG,
+      initialTempC,
+      coolerMarket,
+      coolerLab,
+    });
 
-  const validateGroup = (prefix: 'sr' | 'sd', g: GroupForm): Errors => {
-    const e: Errors = {};
-    const t = toNum(g.labTempC);
-    if (t === null) {
-      e[`${prefix}-labTempC`] = 'Wajib diisi.';
-    } else if (t < -2 || t > 30) {
-      e[`${prefix}-labTempC`] = 'Harus -2 sampai 30 °C.';
-    }
-    if (g.visualCheck.trim() === '') {
-      e[`${prefix}-visualCheck`] = 'Wajib dipilih.';
-    }
-    const lwBefore = toNum(g.labWeightBeforeG);
-    if (lwBefore === null) {
-      e[`${prefix}-labWeightBeforeG`] = 'Wajib diisi.';
-    } else if (!(lwBefore > 0)) {
-      e[`${prefix}-labWeightBeforeG`] = 'Harus lebih dari 0.';
-    }
-    const lwAfter = toNum(g.labWeightAfterG);
-    if (lwAfter === null) {
-      e[`${prefix}-labWeightAfterG`] = 'Wajib diisi.';
-    } else if (!(lwAfter > 0)) {
-      e[`${prefix}-labWeightAfterG`] = 'Harus lebih dari 0.';
-    }
-    const c = toNum(g.sampleShrimpCount);
-    if (c === null) {
-      e[`${prefix}-sampleShrimpCount`] = 'Wajib diisi.';
-    } else if (!Number.isInteger(c) || c < 3 || c > 5) {
-      e[`${prefix}-sampleShrimpCount`] = 'Harus 3–5 ekor.';
-    }
-    return e;
-  };
+  const validateGroup = (prefix: 'sr' | 'sd', g: GroupForm): Errors =>
+    validateGroupForm(prefix, g);
 
   const validateStepC = (): Errors => ({
     ...validateGroup('sr', groupSR),
@@ -576,9 +575,14 @@ export default function NewBatchPage() {
 
   const focusFirstError = (errs: Errors) => {
     const first = Object.keys(errs)[0];
-    if (first) {
-      document.getElementById(first)?.focus();
+    if (!first) {
+      return;
     }
+    // Bila galat memicu pindah langkah, field target baru ada setelah re-render
+    // React; jadwalkan fokus setelah paint agar getElementById tidak gagal senyap.
+    requestAnimationFrame(() => {
+      document.getElementById(first)?.focus();
+    });
   };
 
   /** Pindah tahap hanya bila semua tahap sebelumnya valid (GATE inline). */
@@ -684,12 +688,7 @@ export default function NewBatchPage() {
     }
     if (Object.keys(errs).length > 0) {
       setFieldErrors(errs);
-      const stepOf = (k: string) =>
-        ['procuredAt', 'marketSource', 'arrivedAt'].includes(k)
-          ? 0
-          : ['shrimpCount', 'shrimpLengthCm', 'totalWeightG', 'initialTempC', 'coolerMarket', 'coolerLab', 'photos'].includes(k)
-            ? 1
-            : 2;
+      const stepOf = (k: string) => stepOfField(k);
       setStep(stepOf(Object.keys(errs)[0]));
       focusFirstError(errs);
       return;
@@ -698,7 +697,7 @@ export default function NewBatchPage() {
     setError(null);
     try {
       const batch = await postJson('/api/v1/batches', {
-        procuredAtUtc: new Date(procuredAt).toISOString(),
+        procuredAtUtc: wibInputToUtcIso(procuredAt),
         marketSource: marketSource.trim(),
         sourceType,
         shrimpCount: Number(shrimpCount),
@@ -706,7 +705,7 @@ export default function NewBatchPage() {
         totalWeightG: Number(totalWeightG),
         initialCondition,
         initialTempC: Number(initialTempC),
-        arrivedAtUtc: new Date(arrivedAt).toISOString(),
+        arrivedAtUtc: wibInputToUtcIso(arrivedAt),
         coolerTempMarketC: Number(coolerMarket),
         coolerTempLabC: Number(coolerLab),
         deviationAcknowledged: deviationAck,
@@ -752,14 +751,6 @@ export default function NewBatchPage() {
       setSubmitting(false);
     }
   };
-
-  if (isLoading || !user || user.role !== 'ADMIN') {
-    return (
-      <div className="flex justify-center py-16" aria-label="Memuat…">
-        <div className="w-8 h-8 rounded-full border-2 border-white/20 border-t-cyan-400 animate-spin motion-reduce:animate-none" />
-      </div>
-    );
-  }
 
   const steps = ['Pengadaan', 'Kondisi & dokumentasi', 'Pengelompokan'];
 
@@ -873,7 +864,7 @@ export default function NewBatchPage() {
             </p>
           </div>
         )}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-labTempC`}>
               Suhu udang sebelum observasi (°C)
@@ -1038,11 +1029,26 @@ export default function NewBatchPage() {
         <p className="text-[11px] font-mono text-white/50 mt-2">
           Tanda <span aria-hidden="true" className="text-rose-400">*</span> merah berarti wajib diisi.
         </p>
-        {draftRestored && (
-          <div className="mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-3 py-2">
-            <p className="text-[11px] font-mono text-cyan-100">
-              Draf isian sebelumnya dipulihkan otomatis. Foto tidak ikut tersimpan — pilih ulang bila perlu.
-            </p>
+        {draftMeaningful(draft) && !draftDismissed && (
+          <div className="mt-3 flex flex-col sm:flex-row sm:items-start justify-between gap-2 rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-3 py-2">
+            <div className="space-y-0.5 text-[11px] font-mono text-cyan-100">
+              <p>
+                Draf isian sebelumnya dipulihkan otomatis
+                {typeof draft.savedAt === 'number'
+                  ? ` — dibuat ${formatWibDateTime(new Date(draft.savedAt))}`
+                  : ''}
+                .
+              </p>
+              <p className="text-cyan-200/80">
+                Draf hanya berlaku di perangkat dan peramban ini. Foto tidak ikut tersimpan — pilih ulang
+                file fotonya.
+              </p>
+              {restoredCaptions.length > 0 && (
+                <p className="text-cyan-200/80">
+                  Caption tersimpan (foto perlu dipilih ulang): {restoredCaptions.join(' · ')}
+                </p>
+              )}
+            </div>
             <button
               type="button"
               onClick={discardDraft}
@@ -1354,4 +1360,27 @@ export default function NewBatchPage() {
       )}
     </div>
   );
+}
+
+/**
+ * Gate halaman: identitas diketahui dulu sebelum form dimuat, supaya draf
+ * (butir 13) hanya dibaca milik akun yang sedang masuk.
+ */
+export default function NewBatchPage() {
+  const { user, isLoading, apiFetch } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isLoading && (!user || user.role !== 'ADMIN')) {
+      router.replace(user ? '/batches' : '/login');
+    }
+  }, [isLoading, user, router]);
+
+  if (isLoading) {
+    return <p className="p-6 text-sm font-mono text-white/60">Memuat sesi…</p>;
+  }
+  if (!user || user.role !== 'ADMIN') {
+    return null;
+  }
+  return <BatchWizardForm key={user.id} userId={user.id} apiFetch={apiFetch} />;
 }
