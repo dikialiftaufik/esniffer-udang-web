@@ -145,7 +145,8 @@ export default function Header() {
   };
 
   return (
-    <header className="relative z-10 flex flex-wrap justify-between items-center px-6 py-4 rounded-2xl bg-white/10 backdrop-blur-lg border border-white/20 shadow-[0_8px_32px_0_rgba(0,0,0,0.3)] gap-4">
+    <>
+      <header className="relative z-10 flex flex-wrap justify-between items-center px-6 py-4 rounded-2xl bg-white/10 backdrop-blur-lg border border-white/20 shadow-[0_8px_32px_0_rgba(0,0,0,0.3)] gap-4">
       {/* Brand */}
       <div className="flex items-center gap-3">
         <Link href="/" className="flex items-center gap-2 group">
@@ -378,15 +379,16 @@ export default function Header() {
           </Link>
         ) : null}
       </div>
-
-      <CreateChamberModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        onChamberCreated={() => {
-          setRefreshKey((k) => k + 1);
-        }}
-        existingChambers={chambers}
-      />
     </header>
-  );
+
+    <CreateChamberModal
+      isOpen={isCreateModalOpen}
+      onClose={() => setIsCreateModalOpen(false)}
+      onChamberCreated={() => {
+        setRefreshKey((k) => k + 1);
+      }}
+      existingChambers={chambers}
+    />
+  </>
+);
 }
