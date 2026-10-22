@@ -16,7 +16,7 @@
 3. [Kamus cepat istilah](#3-kamus-cepat-istilah)
 4. [Peta halaman: URL → file → tugas](#4-peta-halaman-url--file--tugas)
 5. [Fitur detail, halaman demi halaman](#5-fitur-detail-halaman-demi-halaman)
-6. [Peta API (33 endpoint)](#6-peta-api-33-endpoint)
+6. [Peta API (34 endpoint)](#6-peta-api-34-endpoint)
 7. [Peta basis data (14 model)](#7-peta-basis-data-14-model)
 8. [Aturan domain: file yang jadi sumber kebenaran](#8-aturan-domain-file-yang-jadi-sumber-kebenaran)
 9. [Data keluar: dua jenis CSV](#9-data-keluar-dua-jenis-csv)
@@ -67,7 +67,7 @@ Tiga tujuan utama produknya:
             ▼                                    ▼
       ┌────────────────────────────────────────────────────────┐
       │  LAPIS 3 — Server Next.js (API routes) + PostgreSQL      │
-      │  • 33 endpoint REST di app/api/v1/**                    │
+      │  • 34 endpoint REST di app/api/v1/**                    │
       │  • Aturan validasi (lib/api/*, lib/batch-wizard.ts)     │
       │  • Tabel: batches, groups, sessions, photos, notifikasi │
       └────────────────────────────────────────────────────────┘
@@ -109,7 +109,7 @@ Tiga tujuan utama produknya:
 | **Sesi (session)** | Satu pengukuran pada satu grup pada satu titik waktu (mis. H0, H6, H12). |
 | **Chamber** | Wadah(termokontrol) berisi sensor; punya kode seperti `CH-01`. |
 | **Device** | Papan ESP32 + sensor; punya kode seperti `esp32-001`, dan *ditugaskan* ke chamber. |
-| **Cool box** | Kotak es yang mengawal udang; punya **suhu saat di pasar** dan **suhu saat di lab**. |
+| **Cool box** | Kotak es yang mengawal udang; punya **suhu saat berangkat**, **suhu saat di pasar**, dan **suhu saat di lab**. |
 | **Observasi** | Pengukuran yang dilakukan operator (bukan pengukuran otomatis sensor). |
 | **Warmup** | Periode 30 menit sebelum pengukuran dimulai (sensor dinyalakan dulu). |
 | **Baseline** | Pengukuran pertama pada satu sesi — dipakai sebagai pembanding. |
@@ -194,9 +194,9 @@ Komponen bersama yang dipakai di semua halaman:
 
 | Langkah | Isi | Field & validasi (sumber: `lib/batch-wizard.ts`, `lib/api/validation.ts`, `shared/dataset.ts`) |
 |---|---|---|
-| **1. Pengadaan** | Kapan & di mana udang dibeli | `Tanggal dan jam beli (WIB)` — terisi otomatis dari jam perangkat, **wajib 06:00–08:00 WIB**; `Tanggal dan jam tiba di lab (WIB)` — harus **setelah** jam beli; `Jenis sumber` — Pasar / Supermarket / Tambak; `Sumber` — teks bebas ≤ 100 karakter; centang **deviasi cold-chain** bila perjalanan > 3 jam. |
-| **2. Kondisi & dokumentasi** | Kondisi udang & bukti foto | `Kondisi awal udang` (mati/hidup); `Jumlah total udang` ≥ 10 ekor; `Panjang udang` 1–50 cm; `Berat total` 0–2000 g; `Suhu awal udang` −2…30 °C; `Suhu cool box saat di pasar` dan `saat di lab` keduanya 0–4 °C; **foto + caption** (JPG/PNG ≤ 5 MB, caption wajib ≤ 140 karakter). |
-| **3. Pengelompokan** | Dua grup & cara simpan | `SR` (ruang) & `SD` (dingin) — tiap grup punya: `Suhu udang sebelum observasi` −2…30 °C, `Temuan visual` (normal/melanosis/damaged/mixed_species), `Berat sampel sebelum/sesudah observasi` > 0 g, `Jumlah udang per sesi` 3–5 ekor, radio **Dalam chamber / Langsung di kulkas** (khusus grup dingin), dan foto grup. |
+| **1. Pengadaan** | Berangkat & sumber udang | `Tanggal dan jam berangkat (WIB)` — terisi otomatis dari jam perangkat, **wajib 05:00–08:00 WIB** dan sebelum jam beli; `Suhu cool box saat berangkat (°C)` — **−10…10 °C**; `Jenis sumber` — dropdown Pasar (default) / Supermarket / Tambak; `Sumber` — teks bebas ≤ 100 karakter. |
+| **2. Kondisi & Dokumentasi** | Pembelian, kedatangan, kondisi udang & bukti foto | `Tanggal dan jam beli (WIB)` dan `Tanggal dan jam tiba di lab (WIB)` — keduanya **wajib 05:00–08:00 WIB**, urutan berangkat < beli < tiba; centang **deviasi cold-chain** bila perjalanan (beli → tiba) > 3 jam; `Kondisi awal udang` (mati/hidup); `Jumlah total udang` ≥ 10 ekor; `Panjang udang` 1–50 cm; `Berat total` 0–2000 g; `Suhu awal udang` **−10…10 °C**; `Suhu cool box saat di pasar` dan `saat di lab` keduanya **−10…10 °C**; **foto kondisi awal udang + caption** (JPG/PNG ≤ 5 MB, caption wajib ≤ 140 karakter). |
+| **3. Pengelompokan** | Dua grup & cara simpan | `SR` (ruang) & `SD` (dingin) - tiap grup punya: `Suhu udang` −2…30 °C (nilai awal), `Temuan visual` (normal/melanosis/damaged/mixed_species), `Berat sampel sebelum observasi` > 0 g, `Berat total udang` > 0 g (≤ 2000 g), `Jumlah udang per sesi` 3-5 ekor, radio **Dalam chamber / Langsung di kulkas** (khusus grup dingin), dan foto grup. Nilai suhu/berat ini **hanya nilai awal**; data per tahap observasi disimpan per sesi (lihat §5.E). |
 
 Fitur pendukung di halaman ini:
 
@@ -213,13 +213,16 @@ Fitur pendukung di halaman ini:
 
 | Fitur | File | Alur & detail |
 |---|---|---|
-| Ringkasan data | `app/batches/[batchId]/page.tsx` | Menampilkan seluruh isian batch (dari `GET /api/v1/batches/{id}`). |
+| Ringkasan data | `app/batches/[batchId]/page.tsx` | Menampilkan seluruh isian batch (dari `GET /api/v1/batches/{id}`). Label observasi: `Suhu udang (°C)` dan `Berat total udang (g)` — diambil dari nilai awal grup (langkah 3 wizard). |
 | **Dua grup + mode penyimpanan** | `app/batches/[batchId]/page.tsx` | Judul grup-cold menampilkan mode: "Suhu Dingin, chamber" atau "…langsung di kulkas". Untuk grup kulkas, **pemilih chamber disembunyikan** saat membuat sesi (agar tidak tercampur dengan data chamber). |
-| **Sesi per grup** | `app/api/v1/groups/[groupId]/sessions/route.ts` | Tombol "Start Sesi" membuka form pra-sesi: pilih chamber (wajib untuk grup chamber), isi suhu & berat, unggah foto → membuat sesi `H0` (`POST …/sessions`). Sesi **dinyatakan complete** setelah checkbox "Cleaning 70%" (`PATCH /api/v1/sessions/{id}/complete`). |
+| **Edit data utuh (satu tombol)** | `app/batches/[batchId]/page.tsx`, `app/api/v1/batches/[batchId]/route.ts` (`PATCH`) | Tombol **"Edit data"** di kartu DATA PENCATATAN membuka satu form utuh berisi tiga bagian wizard sekaligus (**Pengadaan**, **Kondisi & dokumentasi**, **Pengelompokan** per grup — tanpa tab). `Jenis sumber` jadi dropdown; centang deviasi cold-chain otomatis bila durasi beli → tiba > 3 jam. Validasi memakai `validateStepA`/`validateStepB`/`validateGroupFields` dari `lib/batch-wizard.ts`. Kirim `PATCH /api/v1/batches/{id}` (payload lengkap; nilai tak diubah tetap dikirim dari data lama — *merge* di server). `sizeGrade` **dihitung ulang** dari jumlah ÷ berat × 1000; semua gate wizard ditegakkan ulang (urutan waktu, jendela 05:00–08:00, rentang nilai); batch terkunci ditolak 409. |
+| **Sesi per tahap (modal "Tahap N")** | `app/api/v1/groups/[groupId]/sessions/route.ts` | Tombol "Start Sesi" membuka modal berjudul **"Tahap N"** (N = posisi timepoint dalam urutan grup: H0 → Tahap 1, H6 → Tahap 2, dst.). Isi: `Suhu udang (°C)` −2…30 dan `Berat total udang (g)` > 0 ≤ 2000 (opsional, titik desimal), lalu **Foto dokumentasi** + caption (bukan lagi "(opsional)" — opsional dari sifa wajibnya tetap: boleh kosong). Suhu/berat disimpan **per sesi** (`measurement_sessions.shrimp_temp_c` / `shrimp_weight_g`, CHECK range di DB). Sesi **dinyatakan complete** setelah checkbox "Cleaning 70%" (`PATCH /api/v1/sessions/{id}/complete`). |
+| **Tabel riwayat tahap (selalu tampil)** | `app/batches/[batchId]/page.tsx` | Tiap kartu grup punya tabel: **Tahap | Timepoint | Suhu | Berat | Foto | Aksi**. Baris muncul begitu sesi dibuat (tanpa blok `<details>`). Kolom Aksi: ikon pensil = koreksi suhu/berat (`PATCH /api/v1/sessions/{id}`; nilai eksplisit `null` mengosongkan), ikon ulang = data bocor/kurang lengkap → buka form ulang (`/reopen`); baris yang masih `open` juga memuat checkbox **Cleaning 70%** + tombol **Complete**. Suhu/berat tampil 2 desimal gaya Indonesia (6,25 °C). |
+| **Penampil foto tahap** | `app/batches/[batchId]/page.tsx` | Tombol kamera di kolom Foto membuka modal penampil: gambar + caption bernomor (1 kolom di HP, 2 kolom ≥ sm); tutup dengan tombol bertanda aksesibel. |
 | **Ulangi sesi** | `app/api/v1/sessions/[sessionId]/reopen/route.ts` | Sesi `incomplete` bisa diulang tanpa membuat ID baru. |
-| **Foto per grup** | `app/api/v1/batches/[batchId]/photos/route.ts` | Foto disimpan di `batch_photos` dengan `group_id` opsional; di halaman detail setiap grup punya galerinya sendiri + badge SR/SD. Caption bisa diedit (PATCH) dan dihapus (dialog konfirmasi). |
-| **Form edit grup** | `app/batches/[batchId]/page.tsx`, `app/api/v1/groups/[groupId]/route.ts` | Tombol "Edit data grup" → form inline (suhu, berat sebelum, berat sesudah, mode penyimpanan). Validasi **sama persis** dengan wizard (`validateGroupFields` di `lib/batch-wizard.ts`), pesan galat tampil per field. |
-| **Kunci batch** | `app/api/v1/batches/[batchId]/lock/route.ts` | Setelah dikunci, semua mutasi grup/foto ditolak **409**. Syarat: tidak boleh ada sesi yang masih `open`. |
+| **Foto per grup** | `app/api/v1/batches/[batchId]/photos/route.ts` | Foto disimpan di `batch_photos` dengan `group_id` opsional (foto grup) serta `session_id` opsional (foto tahap — taut ke sesi, gagal 404 bila sesi bukan milik batch ini). Foto tahap tetap ikut galeri batch + tampil di tabel tahap; caption bisa diedit (PATCH) dan dihapus (dialog konfirmasi). |
+| **Edit grup (bagian dari Edit data)** | `app/api/v1/groups/[groupId]/route.ts` (`PATCH`) | Blok grup di dalam form Edit data utuh; field yang boleh diubah via API: `labTempC`, `labWeightBeforeG`, `labWeightAfterG`, `coldStorageMode` — `visualCheck` & `sampleShrimpCount` tampil-saja. |
+| **Kunci batch** | `app/api/v1/batches/[batchId]/lock/route.ts` | Setelah dikunci, semua mutasi batch/grup/sesi/foto ditolak **409**. Syarat: tidak boleh ada sesi yang masih `open`. |
 | **Hapus batch** | `app/api/v1/batches/[batchId]/route.ts` | Hapus batch + foto + grup (cascade di DB); dialog konfirmasi. |
 
 ---
@@ -246,7 +249,7 @@ Fitur pendukung di halaman ini:
 
 ---
 
-## 6. Peta API (33 endpoint)
+## 6. Peta API (34 endpoint)
 
 Semua endpoint berada di `app/api/**/route.ts`, memakai kontrak seragam: **`{ data: ... }`** saat sukses,
 **`{ error: { code, message, details? } }`** saat gagal (lihat `lib/api/errors.ts` + `lib/api/response.ts`).
@@ -276,7 +279,7 @@ Semua endpoint berada di `app/api/**/route.ts`, memakai kontrak seragam: **`{ da
 | Endpoint | Metode | Peran | File |
 |---|---|---|---|
 | `/api/v1/batches` | GET/POST | GET semua · POST ADMIN | `app/api/v1/batches/route.ts` |
-| `/api/v1/batches/{batchId}` | GET/DELETE | GET semua · DELETE ADMIN | `app/api/v1/batches/[batchId]/route.ts` |
+| `/api/v1/batches/{batchId}` | GET/PATCH/DELETE | GET semua · PATCH/DELETE ADMIN (PATCH menolak batch terkunci 409) | `app/api/v1/batches/[batchId]/route.ts` |
 | `/api/v1/batches/bulk-delete` | POST | ADMIN | `app/api/v1/batches/bulk-delete/route.ts` |
 | `/api/v1/batches/{batchId}/groups` | POST | ADMIN | `app/api/v1/batches/[batchId]/groups/route.ts` |
 | `/api/v1/batches/{batchId}/photos` | GET/POST/PATCH/DELETE | GET semua · lain ADMIN | `app/api/v1/batches/[batchId]/photos/route.ts` |
@@ -289,6 +292,7 @@ Semua endpoint berada di `app/api/**/route.ts`, memakai kontrak seragam: **`{ da
 | Endpoint | Metode | Peran | File |
 |---|---|---|---|
 | `/api/v1/groups/{groupId}/sessions` | POST | ADMIN | `app/api/v1/groups/[groupId]/sessions/route.ts` |
+| `/api/v1/sessions/{sessionId}` | PATCH | ADMIN (batch terkunci → 409, sesi `locked` → 409) | `app/api/v1/sessions/[sessionId]/route.ts` |
 | `/api/v1/sessions/{sessionId}/complete` | PATCH | ADMIN | `app/api/v1/sessions/[sessionId]/complete/route.ts` |
 | `/api/v1/sessions/{sessionId}/reopen` | POST | ADMIN | `app/api/v1/sessions/[sessionId]/reopen/route.ts` |
 
@@ -334,8 +338,8 @@ Semua tabel PostgreSQL didefinisikan di `prisma/schema.prisma`; nama kolom DB me
 | `SensorReading` | `sensor_readings` | satu reading sensor (suhu, RH, gas, kualitas waktu) | → `Chamber`, `Device` |
 | `CollectionBatch` | `collection_batches` | batch pencatatan (waktu, sumber, jumlah/berat udang, status kunci) | punya `SampleGroup`, `BatchPhoto` |
 | `SampleGroup` | `sample_groups` | grup SR/SD: kondisi simpan, mode cold, suhu & berat sampel, jumlah ekor | → `CollectionBatch`, `MeasurementSession` |
-| `MeasurementSession` | `measurement_sessions` | satu sesi observasi (timepoint H0/H6/…, chamber, device, status) | → `SampleGroup` |
-| `BatchPhoto` | `batch_photos` | foto + caption, `group_id` opsional (foto grup) | → `CollectionBatch`, `SampleGroup` |
+| `MeasurementSession` | `measurement_sessions` | satu sesi observasi (timepoint H0/H6/…, chamber, device, status) + data tahap: `shrimp_temp_c` −2…30, `shrimp_weight_g` > 0 ≤ 2000 (CHECK `shrimp_ranges`) | → `SampleGroup` |
+| `BatchPhoto` | `batch_photos` | foto + caption, `group_id` opsional (foto grup), `session_id` opsional (foto tahap, `ON DELETE SET NULL`) | → `CollectionBatch`, `SampleGroup`, `MeasurementSession` |
 | `HistorySequenceWatermark` | `history_sequence_watermark` | penanda urutan riwayat per chamber (untuk paginasi) | → `Chamber` |
 | `IngestOutcome` | `ingest_outcomes` | catatan hasil tiap pesan MQTT (accepted/duplicate/rejected) | → `Device` |
 | `Notification` | `notifications` | notifikasi operator (jenis, pesan, sudah dibaca) | → `User` |
@@ -472,7 +476,7 @@ rea analyze-javascript-application "<path>/.next/server" --json > hasil.json
 | Batasan analisis | 17 limitation (graf semantik dipangkas oleh plafon 20.000/100.000 node) |
 
 **Yang terkonfirmasi dari artefak build** (bukan dari source): seluruh route API ada sebagai
-`app/api/v1/**/route.js` — 33 endpoint, termasuk `notifications/read-all`, `batches/bulk-delete`,
+`app/api/v1/**/route.js` - 34 endpoint, termasuk `notifications/read-all`, `batches/bulk-delete`,
 `groups/[groupId]/sessions`, `chambers/[chamberId]/stream`. Kata kunci fitur yang muncul di bundel:
 `stability` 8.826, `chamber` 4.217, `batches` 2.718, `notification` 1.246, `reopen` 259,
 `bulk-delete` 216, `unread` 247, `ingest` 242, `mq137/136/4` 92 masing-masing, `csv` 38, `warmup` 32,
@@ -496,7 +500,8 @@ MCP REA sudah terhubung ke proyek ini (lihat `docs/Panduan_Menghubungkan_MCP_REA
 | Login ditolak | user belum di-seed | `npm run seed` |
 | "Gagal memuat chamber" | belum ada chamber aktif | seed sudah membuat CH-01/CH-02; cek `GET /api/v1/chambers?active=true` |
 | Tombol "Lanjut" tidak bergerak | field wajib di langkah itu belum valid | pesan merah muncul per field; perbaiki dulu |
-| "Harus pagi 06:00–08:00 WIB" | jam beli di luar jendela (jam perangkat) | setel jam perangkat; jam device = sumber nilai default |
+| "Harus di antara 05:00–08:00 WIB" | jam berangkat/beli/tiba di luar jendela (jam perangkat) | setel jam perangkat; jam device = sumber nilai default |
+| "Harus −10 sampai 10 °C" | suhu cool box atau suhu awal udang di luar rentang | ukur ulang dengan termometer yang sudah dikalibrasi |
 | Batch terkunci tidak bisa diubah | `lockedAt` terisi | buka batch baru atau hapus (kalau memang dibatalkan) |
 | Notifikasi tidak muncul | worker tidak berjalan / sensor belum stabil 10 menit | jalankan worker; cek `GET /api/v1/ingest/health` |
 | Tabel riwayat kosong | rentang terlalu sempit | pilih preset "Hari Ini" atau "1 Tahun"; data dibaca dari DB, bukan dari tick live |

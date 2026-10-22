@@ -48,19 +48,22 @@ dan **Keluar** (dipisah garis) → klik Pencatatan. Anda melihat daftar
 batch dikelompokkan per pasar beserta tanggal belinya
 (mungkin masih kosong — tidak apa-apa).
 
-### Langkah 1 — Buat batch baru (form 2 tahap)
+### Langkah 1 — Buat batch baru (form 3 tahap)
 Klik **＋Batch Baru**, isi berurutan (tanda `*` merah = wajib):
 
-1. **Pengadaan**: tanggal dan jam beli + tanggal dan jam tiba di lab
-   (durasi tampil otomatis; >3 jam wajib centang deviasi), pasar, jenis sumber (Pasar/Tambak),
-   kondisi awal (Mati/Hidup), jumlah ekor, panjang udang, berat total,
-   suhu awal, suhu cool box, lalu foto (tiap foto wajib beri caption;
-   boleh tambah bertahap, foto lama tidak hilang).
-   *Catatan: jam beli harus pagi 06:00–08:00; kalau diisi jam 10,
-   form menolak dan menjelaskan kenapa. Tombol **Isi otomatis
-   (data tes)** boleh dipakai untuk latihan — periksa dulu angkanya
-   sebelum Simpan.*
-2. Klik **Lanjut ke Pengelompokan**, isi kedua kartu — **Suhu Ruang
+1. **Pengadaan**: tanggal dan jam berangkat dari lab + suhu cool box saat
+   berangkat, lalu jenis sumber (dropdown Pasar/Supermarket/Tambak) dan
+   nama sumber (teks bebas). *Jam berangkat harus 05:00–08:00 WIB; kalau
+   diisi jam 10, form menolak dan menjelaskan kenapa.*
+2. **Kondisi & Dokumentasi**: tanggal dan jam beli + tanggal dan jam tiba
+   di lab (durasi tampil otomatis; >3 jam wajib centang deviasi), kondisi
+   awal (Mati/Hidup), jumlah ekor, panjang udang, berat total, suhu awal,
+   suhu cool box saat di pasar dan saat di lab, lalu foto kondisi awal
+   udang (tiap foto wajib beri caption; boleh tambah bertahap, foto lama
+   tidak hilang). *Jam beli dan jam tiba juga wajib 05:00–08:00 WIB dengan
+   urutan berangkat < beli < tiba. Tombol **Isi otomatis (data tes)**
+   boleh dipakai untuk latihan — periksa dulu angkanya sebelum Simpan.*
+3. Klik **Lanjut ke Pengelompokan**, isi kedua kartu — **Suhu Ruang
    (25 ± 2 °C)** dan **Suhu Dingin (4 ± 1 °C)** — (suhu tusuk, temuan
    visual, ekor per sesi, berat sebelum + sesudah observasi). Berat
    sebelum observasi diisi sendiri-sendiri di tiap kartu; angkanya
@@ -171,13 +174,17 @@ Anda tidak perlu menghafal ini — sistem yang menegakkannya:
 ## 7. Kenapa tiap kolom ada (alasan per field)
 
 **Pengadaan** — mencatat asal-usul sampel sebelum diapa-apakan:
-- *Tanggal dan jam beli* — titik nol umur sampel; wajib pagi 06:00–08:00
+- *Tanggal dan jam berangkat* — titik tolak perjalanan ke pasar; wajib
+  05:00–08:00 WIB dan sebelum jam beli. Dicatat agar durasi di luar pasar
+  (perjalanan pergi) tidak hilang.
+- *Suhu cool box saat berangkat* — kondisi awal rantai dingin sebelum es
+  mulai bekerja; menerima −10 sampai 10 °C.
+- *Tanggal dan jam beli* — titik nol umur sampel; wajib 05:00–08:00 WIB
   karena protokol menyeragamkan kesegaran awal (belanja siang = sampel
   lebih tua = data tak sebanding).
-- *Sumber pasar* — variasi asal memengaruhi hasil; teks bebas karena
-  daftar pasar bisa berubah.
-- *Jenis sumber (Pasar/Tambak)* — hanya dua kemungkinan, jadi radio
-  (tanpa opsi ketiga yang membingungkan).
+- *Sumber* — nama lokasi, teks bebas karena daftar pasar bisa berubah.
+- *Jenis sumber* — dropdown Pasar/Supermarket/Tambak; tiga kemungkinan
+  yang diakui protokol, dengan Pasar sebagai default.
 - *Jumlah ekor* — memastikan stok cukup untuk 2 grup + cadangan;
   minimal 10.
 - *Ukuran (ekor/kg)* — terhitung otomatis dari ekor ÷ berat × 1000,
@@ -188,18 +195,20 @@ Anda tidak perlu menghafal ini — sistem yang menegakkannya:
 - *Berat total* — angka dasar normalisasi (emisi gas per gram);
   wajib timbang digital, bukan kira-kira.
 - *Suhu awal udang* — suhu tubuh sampel sebelum masuk cold-chain;
-  termometer tusuk, bukan suhu udara.
+  termometer tusuk, bukan suhu udara; menerima −10 sampai 10 °C.
 - *Kondisi awal* — hanya dua pilihan: Mati atau Hidup.
-- *Foto* — bukti visual + bahan pelabelan di masa depan; tiap foto wajib
-  ber-caption (mis. di pasar, sebelum chamber) agar keadaannya jelas.
+- *Foto kondisi awal udang* — bukti visual + bahan pelabelan di masa
+  depan; tiap foto wajib ber-caption (mis. di pasar, sebelum chamber)
+  agar keadaannya jelas.
 
 **Tiba & cool box** — membuktikan cold-chain tidak putus:
 - *Tanggal dan jam tiba* — durasi beli–tiba harus ≤3 jam; lebih dari itu wajib
   diakui sebagai deviasi (jujur tercatat, bukan ditolak diam-diam).
-  Urutannya: beli di pasar → tiba kembali ke lab,
-  jadi tanggal dan jam beli harus sebelum tanggal dan jam tiba.
-- *Suhu cool box min–max* — suhu *udara box* selama jalan (dari alat
-  pantau di tengah box); harus 0–4 °C.
+  Urutannya: berangkat dari lab → beli di pasar → tiba kembali ke lab,
+  jadi berangkat < beli < tiba, dan ketiganya di jendela 05:00–08:00 WIB.
+- *Suhu cool box saat di pasar & saat di lab* — suhu *udara box* di dua
+  titik berbeda; protokol menjaga 0–4 °C, input menerima −10 sampai
+  10 °C agar kondisi nyata di lapangan tetap tercatat.
 
 **Pengelompokan (diisi 2x: Suhu Ruang dan Suhu Dingin)** — mencatat perlakuan tiap kelompok:
 - *Suhu tusuk saat tiba* — titik nol kurva pembusukan masing-masing grup.
@@ -327,14 +336,19 @@ kolom sesinya lalu kosong dengan penanda `no_session`). Selalu ada
 isinya walau sensor belum mengirim apa pun, karena berasal dari
 formulir Anda + hasil backfill. Kolom berurutan:
 
-- Blok batch (isian Pengadaan): *batch_id*, *procured_at_utc* (jam beli,
-  UTC), *market_source*, *source_type*, *shrimp_count* (`12`),
-  *size_grade* (`25`, ekor/kg, terhitung otomatis), *shrimp_length_cm*
-  (`12.5`), *total_weight_g* (`480`), *initial_condition* (`dead`),
-  *initial_temp_c* (`8.5`), *arrived_at_utc*, *cooler_temp_min_c*
-  (`1.2`), *cooler_temp_max_c* (`3.6`), *ice_to_shrimp_ratio* (`2:1`),
+- Blok batch (isian Pengadaan): *batch_id*, *departed_date* +
+  *departed_time_wib* (jam berangkat, dipecah tanggal & jam WIB),
+  *procured_date* + *procured_time_wib* (jam beli, WIB), *market_source*,
+  *source_type*, *shrimp_count* (`12`), *size_grade* (`25`, ekor/kg,
+  terhitung otomatis), *shrimp_length_cm* (`12.5`), *total_weight_g*
+  (`480`), *initial_condition* (`dead`), *initial_temp_c* (`2.5`),
+  *arrived_date* + *arrived_time_wib* (jam tiba, WIB),
+  *cooler_temp_departure_c* (`1.0`), *cooler_temp_market_c* (`1.2`),
+  *cooler_temp_lab_c* (`3.6`), *ice_to_shrimp_ratio* (`2:1`),
   *rejection_notes* (kosong = tidak ada penolakan), *photo_count* (`2`),
-  *locked_at* (kosong = batch masih terbuka).
+  *locked_at* (kosong = batch masih terbuka). Batch lama yang dibuat sebelum
+  kolom keberangkatan ada akan mengosongkan sel *departed* dan
+  *cooler_temp_departure_c* — bukan nilai karangan.
 - Blok grup (isian Pengelompokan): *group_id*, *storage_condition*,
   *target_temp_c*, *lab_temp_c* (`6.4`), *visual_check* (`normal`),
   *lab_weight_before_g* (`472`), *lab_weight_after_g* (`469.2`),
@@ -399,6 +413,16 @@ Ringkasan ini agar Anda tidak bingung bila istilah di layar beda dengan catatan/
 | `source_type`: `market`/`farm` | `market`/`farm`/`supermarket` (lowercase) |
 
 > ⚠️ **Template Excel / skrip analisis lama perlu disesuaikan** — header dan urutan kolom berubah. Data lama tetap terbaca (nilai UTC sumber kebenaran), hanya header ekspor yang beda.
+
+#### 8.6.5 Revisi wizard terbaru (keberangkatan & rentang suhu)
+
+| Lama | Baru |
+|---|---|
+| Jendela waktu 06:00–08:00 WIB | **05:00–08:00 WIB** untuk berangkat, beli, dan tiba |
+| Belum ada kolom keberangkatan | `departed_date`, `departed_time_wib`, `cooler_temp_departure_c` (baris lama = sel kosong) |
+| Suhu cool box 0–4 °C, suhu awal udang −2…30 °C | Keduanya menerima **−10…10 °C** (form, API, dan CHECK DB) |
+| "Jenis sumber" berupa radio | **Dropdown** dengan Pasar sebagai pilihan awal |
+| Beli & tiba di step 1 | Beli & tiba pindah ke step 2 (Kondisi & Dokumentasi); step 1 berisi keberangkatan + sumber |
 
 #### 8.6.5 Enam cek manual cepat (verifikasi UI)
 1. `/batches/new` → jam beli `10:00` → **Lanjut** tertahan + merah "jam beli 06:00–08:00".
