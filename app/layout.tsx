@@ -1,8 +1,16 @@
 import './globals.css';
-import Header from '../components/layout/Header'; 
-import { AuthProvider } from '../components/auth/AuthProvider'; 
+import Header from '../components/layout/Header';
+import { AuthProvider } from '../components/auth/AuthProvider';
+import type { Metadata } from 'next';
 
-export const metadata = {
+// metadataBase mengikuti APP_BASE_URL di hosting produksi (mis.
+// https://e-sniffer.stas-rg.com); fallback localhost untuk dev sehingga
+// URL kanonik/OG tidak lagi relatif ke domain asal request.
+const SITE_URL = (process.env.APP_BASE_URL ?? 'http://localhost:3000').trim();
+
+export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
+  alternates: { canonical: '/' },
   title: 'E-Sniffer Dashboard',
   description: 'Monitoring Gas Berbasis IoT',
 };
