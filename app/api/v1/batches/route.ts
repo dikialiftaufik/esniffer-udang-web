@@ -1,18 +1,12 @@
 import { prisma } from '../../../../lib/db/client.ts';
 import { requireAuth, verifyCsrfAndOrigin } from '../../../../lib/auth/guard.ts';
 import { jsonResponse, errorResponse, getRequestId } from '../../../../lib/api/response.ts';
-import { parseLimit, parseIsoDate, parseRequiredString, parseOptionalString } from '../../../../lib/api/validation.ts';
-import { conflict, validationError } from '../../../../lib/api/errors.ts';
+import { parseLimit } from '../../../../lib/api/validation.ts';
 import { buildBatchId, wibDateStamp } from '../../../../shared/dataset.ts';
+import { conflict, validationError } from '../../../../lib/api/errors.ts';
 import {
   serializeBatch,
-  parseSourceType,
-  parseInitialCondition,
-  parsePositiveNumber,
-  parseBoundedNumber,
-  parseIntMinimum,
-  assertTransportGates,
-  assertProcurementWindow,
+  parseBatchFields,
 } from '../../../../lib/api/dataset.ts';
 
 export async function GET(request: Request): Promise<Response> {
@@ -54,43 +48,10 @@ export async function POST(request: Request): Promise<Response> {
     const auth = await requireAuth(request, ['ADMIN']);
 
     const body = await request.json();
-    const procuredAtUtc = parseIsoDate(body?.procuredAtUtc, 'procuredAtUtc', true)!;
-    const marketSource = parseRequiredString(body?.marketSource, 'marketSource', 1, 100);
-    const sourceType = parseSourceType(body?.sourceType);
-    const shrimpCount = parseIntMinimum(body?.shrimpCount, 'shrimpCount', 10);
-    // Ukuran ekor/kg terhitung otomatis (tidak dibaca dari input):
-    // jumlah ekor ÷ berat total (gram) × 1000, dibulatkan ke bilangan bulat.
-    const totalWeightG = parsePositiveNumber(body?.totalWeightG, 'totalWeightG', 2000);
-    const sizeGrade = Math.round((shrimpCount / totalWeightG) * 1000);
-    const shrimpLengthCm = parseBoundedNumber(body?.shrimpLengthCm, 'shrimpLengthCm', 1, 50);
-    const initialCondition = parseInitialCondition(body?.initialCondition);
-    const initialTempC = parseBoundedNumber(body?.initialTempC, 'initialTempC', -2, 30);
-    const arrivedAtUtc = parseIsoDate(body?.arrivedAtUtc, 'arrivedAtUtc', true)!;
-    // Butir 7: dua titik pengukuran cool box. Nama baru (market/lab) adalah
-    // kanonik; nama lama (min/max) tetap diterima sebagai alias deprecated.
-    const coolerTempMarketC = parseBoundedNumber(
-      body?.coolerTempMarketC ?? body?.coolerTempMinC,
-      'coolerTempMarketC',
-      0,
-      4
-    );
-    const coolerTempLabC = parseBoundedNumber(
-      body?.coolerTempLabC ?? body?.coolerTempMaxC,
-      'coolerTempLabC',
-      0,
-      4
-    );
-    const iceToShrimpRatio = body?.iceToShrimpRatio === undefined || body?.iceToShrimpRatio === ''
-      ? '2:1'
-      : parseRequiredString(body?.iceToShrimpRatio, 'iceToShrimpRatio', 3, 8);
-    if (!/^\d+:\d+$/.test(iceToShrimpRatio)) {
-      throw validationError('Field "iceToShrimpRatio" harus berpola N:N, contoh 2:1');
-    }
-    const rejectionNotes = parseOptionalString(body?.rejectionNotes, 'rejectionNotes', 500);
+    // Satu sumber kebenaran parsing/gerbang: dipakai juga oleh PATCH
+    // /api/v1/batches/[batchId] (form edit semua bagian di halaman detail).
+    const fields = parseBatchFields(body);
     // Foto selalu mulai kosong dan diisi lewat upload (tabel batch_photos).
-
-    assertProcurementWindow(procuredAtUtc);
-    assertTransportGates(procuredAtUtc, arrivedAtUtc, body?.deviationAcknowledged);
 
     // Auto batch_id server-side; retry naik bila balapan request bersamaan.
     let batch = null;
@@ -98,29 +59,16 @@ export async function POST(request: Request): Promise<Response> {
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       // Prefix harus zona WIB sama seperti buildBatchId; memakai tanggal UTC
       // membuat hitungan sekuens salah pada 00:00–06:59 UTC (= pagi WIB).
-      const prefix = `BT-${wibDateStamp(procuredAtUtc)}`;
+      const prefix = `BT-${wibDateStamp(fields.procuredAtUtc)}`;
       const existing = await prisma.collectionBatch.count({
         where: { batchId: { startsWith: prefix } },
       });
-      const batchId = buildBatchId(procuredAtUtc, existing + attempt);
+      const batchId = buildBatchId(fields.procuredAtUtc, existing + attempt);
       try {
         batch = await prisma.collectionBatch.create({
           data: {
             batchId,
-            procuredAtUtc,
-            marketSource,
-            sourceType,
-            shrimpCount,
-            sizeGrade,
-            shrimpLengthCm,
-            totalWeightG,
-            initialCondition,
-            initialTempC,
-            arrivedAtUtc,
-            coolerTempMarketC,
-            coolerTempLabC,
-            iceToShrimpRatio,
-            rejectionNotes,
+            ...fields,
             operatorId: auth.user.id,
           },
         });

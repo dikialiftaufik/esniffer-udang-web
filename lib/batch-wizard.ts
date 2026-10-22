@@ -6,7 +6,11 @@
  * suite unit dan tidak ikut mati bersama state React.
  */
 import {
+  COOLER_TEMP_MAX_C,
+  COOLER_TEMP_MIN_C,
   DatasetValidationError,
+  INITIAL_TEMP_MAX_C,
+  INITIAL_TEMP_MIN_C,
   isColdChainCompliant,
   isProcurementWindow,
   transportDurationMs,
@@ -14,6 +18,13 @@ import {
 } from '../shared/dataset.ts';
 
 export type WizardErrors = Record<string, string>;
+
+/** Pesan tunggal untuk ketiga titik waktu yang wajib di jendela pengadaan. */
+const WINDOW_MESSAGE = 'Harus di antara 05:00–08:00 WIB (Anda mengisi jam di luar jendela).';
+
+/** Nilai `sourceType` yang diakui kontrak API (lowercase). */
+export const SOURCE_TYPE_VALUES = ['market', 'supermarket', 'farm'] as const;
+export type SourceTypeValue = (typeof SOURCE_TYPE_VALUES)[number];
 
 /**
  * Nilai numerik dari input form: null bila kosong, NaN bila isian bukan
@@ -48,10 +59,13 @@ export function wibInputToUtcIso(value: string): string {
   return parsed.date.toISOString();
 }
 
-/** Field milik langkah 1 — Pengadaan. */
-export const STEP_A_FIELDS = ['procuredAt', 'marketSource', 'arrivedAt'] as const;
-/** Field milik langkah 2 — Kondisi & dokumentasi. */
+/** Field milik langkah 1 — keberangkatan & sumber. */
+export const STEP_A_FIELDS = ['departedAt', 'coolerDeparture', 'marketSource', 'sourceType'] as const;
+/** Field milik langkah 2 — pembelian, kedatangan, kondisi & dokumentasi. */
 export const STEP_B_FIELDS = [
+  'procuredAt',
+  'arrivedAt',
+  'initialCondition',
   'shrimpCount',
   'shrimpLengthCm',
   'totalWeightG',
@@ -69,19 +83,23 @@ export function stepOfField(key: string): number {
 }
 
 export interface StepAInput {
-  procuredAt: string;
-  arrivedAt: string;
+  departedAt: string;
+  coolerDeparture: string;
   marketSource: string;
-  deviationAck: boolean;
+  sourceType: string;
 }
 
 export interface StepBInput {
+  procuredAt: string;
+  arrivedAt: string;
+  departedAt: string;
   shrimpCount: string;
   shrimpLengthCm: string;
   totalWeightG: string;
   initialTempC: string;
   coolerMarket: string;
   coolerLab: string;
+  deviationAck: boolean;
 }
 
 export interface GroupFormInput {
@@ -93,17 +111,26 @@ export interface GroupFormInput {
 }
 
 /**
- * Langkah 1 — Pengadaan: jam beli (06:00–08:00 WIB), sumber, dan jam tiba
- * (setelah jam beli; lebih dari 3 jam butuh catatan deviasi).
+ * Langkah 1 — keberangkatan & sumber: jam berangkat (05:00–08:00 WIB), suhu
+ * cool box saat berangkat, sumber (teks bebas), dan jenis sumber (dropdown).
+ * Urutan berangkat → beli baru bisa diperiksa di langkah 2 karena jam beli
+ * diisi di sana.
  */
 export function validateStepA(input: StepAInput): WizardErrors {
   const e: WizardErrors = {};
 
-  const proc = parseWibInput(input.procuredAt);
-  if (proc.error) {
-    e.procuredAt = proc.error;
-  } else if (proc.date && !isProcurementWindow(proc.date)) {
-    e.procuredAt = 'Harus pagi 06:00–08:00 WIB (Anda mengisi jam di luar jendela).';
+  const dep = parseWibInput(input.departedAt);
+  if (dep.error) {
+    e.departedAt = dep.error;
+  } else if (dep.date && !isProcurementWindow(dep.date)) {
+    e.departedAt = WINDOW_MESSAGE;
+  }
+
+  const cooler = parseFormNumber(input.coolerDeparture);
+  if (cooler === null) {
+    e.coolerDeparture = 'Wajib diisi.';
+  } else if (!(cooler >= COOLER_TEMP_MIN_C && cooler <= COOLER_TEMP_MAX_C)) {
+    e.coolerDeparture = `Harus ${COOLER_TEMP_MIN_C} sampai ${COOLER_TEMP_MAX_C} °C.`;
   }
 
   const source = input.marketSource.trim();
@@ -113,26 +140,44 @@ export function validateStepA(input: StepAInput): WizardErrors {
     e.marketSource = 'Maksimal 100 karakter.';
   }
 
-  const arr = parseWibInput(input.arrivedAt);
-  if (arr.error) {
-    e.arrivedAt = arr.error;
-  } else if (arr.date) {
-    if (proc.date && transportDurationMs(proc.date, arr.date) <= 0) {
-      e.arrivedAt = 'Tanggal dan jam tiba harus setelah tanggal dan jam beli.';
-    } else if (proc.date && !isColdChainCompliant(proc.date, arr.date) && !input.deviationAck) {
-      e.arrivedAt = 'Melebihi 3 jam — centang deviasi di bawah untuk lanjut.';
-    }
+  if (!(SOURCE_TYPE_VALUES as readonly string[]).includes(input.sourceType)) {
+    e.sourceType = 'Wajib dipilih.';
   }
 
   return e;
 }
 
 /**
- * Langkah 2 — Kondisi & dokumentasi: jumlah, panjang, berat, suhu udang, dan
- * dua suhu cool box (0–4 °C masing-masing, butir 7).
+ * Langkah 2 — pembelian, kedatangan, kondisi & dokumentasi: jam beli dan jam
+ * tiba (keduanya 05:00–08:00 WIB), urutan berangkat < beli < tiba, durasi
+ * cold-chain, lalu jumlah/panjang/berat/suhu udang dan suhu cool box.
  */
 export function validateStepB(input: StepBInput): WizardErrors {
   const e: WizardErrors = {};
+
+  const dep = parseWibInput(input.departedAt);
+  const proc = parseWibInput(input.procuredAt);
+  const arr = parseWibInput(input.arrivedAt);
+
+  if (proc.error) {
+    e.procuredAt = proc.error;
+  } else if (proc.date && !isProcurementWindow(proc.date)) {
+    e.procuredAt = WINDOW_MESSAGE;
+  } else if (proc.date && dep.date && transportDurationMs(dep.date, proc.date) <= 0) {
+    e.procuredAt = 'Tanggal dan jam beli harus setelah tanggal dan jam berangkat.';
+  }
+
+  if (arr.error) {
+    e.arrivedAt = arr.error;
+  } else if (arr.date && !isProcurementWindow(arr.date)) {
+    e.arrivedAt = WINDOW_MESSAGE;
+  } else if (arr.date && proc.date) {
+    if (transportDurationMs(proc.date, arr.date) <= 0) {
+      e.arrivedAt = 'Tanggal dan jam tiba harus setelah tanggal dan jam beli.';
+    } else if (!isColdChainCompliant(proc.date, arr.date) && !input.deviationAck) {
+      e.arrivedAt = 'Melebihi 3 jam — centang deviasi di bawah untuk lanjut.';
+    }
+  }
 
   const count = parseFormNumber(input.shrimpCount);
   if (count === null) {
@@ -158,22 +203,22 @@ export function validateStepB(input: StepBInput): WizardErrors {
   const t = parseFormNumber(input.initialTempC);
   if (t === null) {
     e.initialTempC = 'Wajib diisi.';
-  } else if (t < -2 || t > 30) {
-    e.initialTempC = 'Harus -2 sampai 30 °C.';
+  } else if (t < INITIAL_TEMP_MIN_C || t > INITIAL_TEMP_MAX_C) {
+    e.initialTempC = `Harus ${INITIAL_TEMP_MIN_C} sampai ${INITIAL_TEMP_MAX_C} °C.`;
   }
 
   const cmarket = parseFormNumber(input.coolerMarket);
   if (cmarket === null) {
     e.coolerMarket = 'Wajib diisi.';
-  } else if (cmarket < 0 || cmarket > 4) {
-    e.coolerMarket = 'Harus 0–4 °C.';
+  } else if (cmarket < COOLER_TEMP_MIN_C || cmarket > COOLER_TEMP_MAX_C) {
+    e.coolerMarket = `Harus ${COOLER_TEMP_MIN_C} sampai ${COOLER_TEMP_MAX_C} °C.`;
   }
 
   const clab = parseFormNumber(input.coolerLab);
   if (clab === null) {
     e.coolerLab = 'Wajib diisi.';
-  } else if (clab < 0 || clab > 4) {
-    e.coolerLab = 'Harus 0–4 °C.';
+  } else if (clab < COOLER_TEMP_MIN_C || clab > COOLER_TEMP_MAX_C) {
+    e.coolerLab = `Harus ${COOLER_TEMP_MIN_C} sampai ${COOLER_TEMP_MAX_C} °C.`;
   }
 
   return e;

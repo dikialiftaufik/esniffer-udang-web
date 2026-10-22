@@ -114,9 +114,11 @@ test('Waktu: input WIB tersimpan sebagai UTC + label ganda', () => {
   assert.throws(() => wibInputToUtc('2026-10-02 25:00'), DatasetValidationError);
 });
 
-test('Jendela pengadaan: hanya 06:00–08:00 WIB', () => {
+test('Jendela pengadaan: 05:00–08:00 WIB inklusif', () => {
   assert.ok(isProcurementWindow(new Date('2026-10-02T00:00:00.000Z'))); // 07:00 WIB
-  assert.ok(!isProcurementWindow(new Date('2026-10-01T22:00:00.000Z'))); // 05:00 WIB
+  assert.ok(isProcurementWindow(new Date('2026-10-01T22:00:00.000Z'))); // 05:00 WIB
+  assert.ok(isProcurementWindow(new Date('2026-10-02T01:00:00.000Z'))); // 08:00 WIB
+  assert.ok(!isProcurementWindow(new Date('2026-10-01T21:59:00.000Z'))); // 04:59 WIB
   assert.ok(!isProcurementWindow(new Date('2026-10-02T02:00:00.000Z'))); // 09:00 WIB
 });
 

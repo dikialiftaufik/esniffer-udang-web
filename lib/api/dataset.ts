@@ -1,9 +1,18 @@
 import { validationError } from './errors.ts';
 import {
+  parseIsoDate,
+  parseRequiredString,
+  parseOptionalString,
+} from './validation.ts';
+import {
   isColdChainCompliant,
   isProcurementWindow,
   transportDurationMs,
   MAX_PHOTO_CAPTION_LENGTH,
+  COOLER_TEMP_MIN_C,
+  COOLER_TEMP_MAX_C,
+  INITIAL_TEMP_MIN_C,
+  INITIAL_TEMP_MAX_C,
   type StorageConditionCode,
 } from '../../shared/dataset.ts';
 
@@ -155,6 +164,7 @@ const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() 
 type DbBatch = {
   id: string;
   batchId: string;
+  departedAtUtc: Date | null;
   procuredAtUtc: Date;
   marketSource: string;
   sourceType: string;
@@ -165,6 +175,7 @@ type DbBatch = {
   initialCondition: string;
   initialTempC: { toNumber(): number };
   arrivedAtUtc: Date;
+  coolerTempDepartureC: { toNumber(): number } | null;
   coolerTempMarketC: { toNumber(): number };
   coolerTempLabC: { toNumber(): number };
   iceToShrimpRatio: string;
@@ -177,6 +188,7 @@ export function serializeBatch(b: DbBatch) {
   return {
     id: b.id,
     batchId: b.batchId,
+    departedAtUtc: iso(b.departedAtUtc),
     procuredAtUtc: b.procuredAtUtc.toISOString(),
     marketSource: b.marketSource,
     sourceType: DB_TO_SOURCE[b.sourceType] ?? b.sourceType,
@@ -187,6 +199,7 @@ export function serializeBatch(b: DbBatch) {
     initialCondition: DB_TO_CONDITION[b.initialCondition] ?? b.initialCondition,
     initialTempC: dec(b.initialTempC),
     arrivedAtUtc: b.arrivedAtUtc.toISOString(),
+    coolerTempDepartureC: dec(b.coolerTempDepartureC),
     coolerTempMarketC: dec(b.coolerTempMarketC),
     coolerTempLabC: dec(b.coolerTempLabC),
     // Alias deprecated (butir 7): konsumen JSON lama masih membaca nama
@@ -317,17 +330,21 @@ export function serializeSession(s: DbSession) {
 }
 
 /**
- * GATE B: urutan waktu beli → tiba di lab. Cukup dua titik waktu ini yang
- * dicatat; durasi tiba dikurangi beli >3 jam tetap butuh pengakuan
- * deviasi eksplisit.
+ * GATE B: urutan waktu berangkat → beli → tiba di lab. Ketiga titik waktu
+ * dicatat; durasi tiba dikurangi beli >3 jam tetap butuh pengakuan deviasi
+ * eksplisit (jangkar cold-chain tidak berubah).
  */
 export function assertTransportGates(
+  departedAtUtc: Date,
   procuredAtUtc: Date,
   arrivedAtUtc: Date,
   deviationAcknowledged: unknown
 ): void {
   // `<= 0` (bukan `< 0`) karena cek DB menuntut urutan ketat, jadi waktu yang
   // sama persis pun harus ditolak di lapisan aplikasi.
+  if (transportDurationMs(departedAtUtc, procuredAtUtc) <= 0) {
+    throw validationError('Tanggal dan jam berangkat harus sebelum tanggal dan jam beli');
+  }
   if (transportDurationMs(procuredAtUtc, arrivedAtUtc) <= 0) {
     throw validationError('Tanggal dan jam tiba harus setelah tanggal dan jam beli');
   }
@@ -338,9 +355,112 @@ export function assertTransportGates(
   }
 }
 
-/** GATE A: jendela pengadaan 06:00–08:00 WIB. */
-export function assertProcurementWindow(procuredAtUtc: Date): void {
-  if (!isProcurementWindow(procuredAtUtc)) {
-    throw validationError('Belanja harus pagi 06:00–08:00 WIB sesuai protokol');
+/** GATE A: jendela pengadaan 05:00–08:00 WIB untuk berangkat, beli, dan tiba. */
+export function assertProcurementWindow(label: string, atUtc: Date): void {
+  if (!isProcurementWindow(atUtc)) {
+    throw validationError(
+      `Field "${label}" harus di antara 05:00–08:00 WIB sesuai protokol`
+    );
   }
+}
+
+/**
+ * Parsing & validasi lengkap payload data batch (data pencatatan langkah 1–2
+ * wizard). POST /api/v1/batches memakai fungsi ini sebagai satu sumber
+ * kebenaran, sehingga aturan gerbang tidak tersebar di route.
+ *
+ * `body` boleh berisi field di luar daftar ini (id, sizeGrade, aliash lama
+ * coolerTempMinC/MaxC, dsb.) — dibaca hanya field yang relevan; sizeGrade
+ * selalu dihitung ulang dari jumlah ÷ berat agar kontra uyar selalu serasi.
+ */
+export function parseBatchFields(body: Record<string, unknown> | undefined): {
+  departedAtUtc: Date;
+  procuredAtUtc: Date;
+  arrivedAtUtc: Date;
+  marketSource: string;
+  sourceType: 'MARKET' | 'FARM' | 'SUPERMARKET';
+  shrimpCount: number;
+  sizeGrade: number;
+  shrimpLengthCm: number;
+  totalWeightG: number;
+  initialCondition: 'DEAD' | 'ALIVE';
+  initialTempC: number;
+  coolerTempDepartureC: number;
+  coolerTempMarketC: number;
+  coolerTempLabC: number;
+  iceToShrimpRatio: string;
+  rejectionNotes: string | null;
+} {
+  const b = body ?? {};
+  // Helper menerima body JSON apa pun; field tanggal dibaca sebagai string.
+  const asStr = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+  const departedAtUtc = parseIsoDate(asStr(b?.departedAtUtc), 'departedAtUtc', true)!;
+  const procuredAtUtc = parseIsoDate(asStr(b?.procuredAtUtc), 'procuredAtUtc', true)!;
+  const marketSource = parseRequiredString(b?.marketSource, 'marketSource', 1, 100);
+  const sourceType = parseSourceType(b?.sourceType);
+  const shrimpCount = parseIntMinimum(b?.shrimpCount, 'shrimpCount', 10);
+  // Ukuran ekor/kg terhitung otomatis (tidak dibaca dari input):
+  // jumlah ekor ÷ berat total (gram) × 1000, dibulatkan ke bilangan bulat.
+  const totalWeightG = parsePositiveNumber(b?.totalWeightG, 'totalWeightG', 2000);
+  const sizeGrade = Math.round((shrimpCount / totalWeightG) * 1000);
+  const shrimpLengthCm = parseBoundedNumber(b?.shrimpLengthCm, 'shrimpLengthCm', 1, 50);
+  const initialCondition = parseInitialCondition(b?.initialCondition);
+  const initialTempC = parseBoundedNumber(
+    b?.initialTempC,
+    'initialTempC',
+    INITIAL_TEMP_MIN_C,
+    INITIAL_TEMP_MAX_C
+  );
+  const arrivedAtUtc = parseIsoDate(asStr(b?.arrivedAtUtc), 'arrivedAtUtc', true)!;
+  // Tiga titik pengukuran cool box (berangkat, pasar, lab), batas -10..10 °C.
+  // Nama lama (min/max) tetap diterima sebagai alias deprecated.
+  const coolerTempDepartureC = parseBoundedNumber(
+    b?.coolerTempDepartureC,
+    'coolerTempDepartureC',
+    COOLER_TEMP_MIN_C,
+    COOLER_TEMP_MAX_C
+  );
+  const coolerTempMarketC = parseBoundedNumber(
+    b?.coolerTempMarketC ?? b?.coolerTempMinC,
+    'coolerTempMarketC',
+    COOLER_TEMP_MIN_C,
+    COOLER_TEMP_MAX_C
+  );
+  const coolerTempLabC = parseBoundedNumber(
+    b?.coolerTempLabC ?? b?.coolerTempMaxC,
+    'coolerTempLabC',
+    COOLER_TEMP_MIN_C,
+    COOLER_TEMP_MAX_C
+  );
+  const iceToShrimpRatio = b?.iceToShrimpRatio === undefined || b?.iceToShrimpRatio === ''
+    ? '2:1'
+    : parseRequiredString(b?.iceToShrimpRatio, 'iceToShrimpRatio', 3, 8);
+  if (!/^\d+:\d+$/.test(iceToShrimpRatio)) {
+    throw validationError('Field "iceToShrimpRatio" harus berpola N:N, contoh 2:1');
+  }
+  const rejectionNotes = parseOptionalString(b?.rejectionNotes, 'rejectionNotes', 500);
+
+  assertProcurementWindow('departedAtUtc', departedAtUtc);
+  assertProcurementWindow('procuredAtUtc', procuredAtUtc);
+  assertProcurementWindow('arrivedAtUtc', arrivedAtUtc);
+  assertTransportGates(departedAtUtc, procuredAtUtc, arrivedAtUtc, b?.deviationAcknowledged);
+
+  return {
+    departedAtUtc,
+    procuredAtUtc,
+    arrivedAtUtc,
+    marketSource,
+    sourceType,
+    shrimpCount,
+    sizeGrade,
+    shrimpLengthCm,
+    totalWeightG,
+    initialCondition,
+    initialTempC,
+    coolerTempDepartureC,
+    coolerTempMarketC,
+    coolerTempLabC,
+    iceToShrimpRatio,
+    rejectionNotes,
+  };
 }

@@ -243,6 +243,9 @@ model AuthSession {
 model CollectionBatch {
   id                String               @id @default(uuid()) @db.Uuid
   batchId           String               @unique @map("batch_id") @db.VarChar(16)
+  // Keberangkatan dari lab menuju pasar (revisi wizard). Nullable: baris lama
+  // tidak diisi nilai karangan; kewajiban isi ditegakkan di API untuk batch baru.
+  departedAtUtc     DateTime?            @map("departed_at_utc") @db.Timestamptz(3)
   procuredAtUtc     DateTime             @map("procured_at_utc") @db.Timestamptz(3)
   // Teks bebas sesuai revisi (bukan dropdown); non-empty dijaga CHECK.
   marketSource      String               @map("market_source") @db.VarChar(100)
@@ -254,10 +257,11 @@ model CollectionBatch {
   initialCondition  InitialCondition     @map("initial_condition")
   initialTempC      Decimal              @map("initial_temp_c") @db.Decimal(5, 2)
   arrivedAtUtc      DateTime             @map("arrived_at_utc") @db.Timestamptz(3)
-  // Revisi putaran 2 butir 7: dua titik pengukuran — saat di pasar (market)
-  // dan saat di lab. Nama field mengikuti makna kolom; kontrak JSON lama
-  // (coolerTempMinC/MaxC) tetap dilayani sebagai alias deprecated di
-  // serializeBatch agar konsumen API lama tidak rusak.
+  // Revisi wizard: tiga titik pengukuran cool box - saat berangkat (departure),
+  // di pasar (market), dan di lab. Batas domain -10..10 °C (lihat migration
+  // collection_batches_cooler_range); kontrak JSON lama (coolerTempMinC/MaxC)
+  // tetap dilayani sebagai alias deprecated di serializeBatch.
+  coolerTempDepartureC Decimal?           @map("cooler_temp_departure_c") @db.Decimal(5, 2)
   coolerTempMarketC Decimal              @map("cooler_temp_market_c") @db.Decimal(5, 2)
   coolerTempLabC    Decimal              @map("cooler_temp_lab_c") @db.Decimal(5, 2)
   iceToShrimpRatio  String               @default("2:1") @map("ice_to_shrimp_ratio") @db.VarChar(8)
