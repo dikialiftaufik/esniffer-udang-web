@@ -124,6 +124,7 @@ describe('Dataset Feature End-to-End Flow (Fase 8)', () => {
   it('kriteria #2: batch cold-chain >3 jam ditolak tanpa acknowledgement', async () => {
     const res = await createBatch(
       post(adminCookie, 'http://localhost:3000/api/v1/batches', {
+        departedAtUtc: `${DAY}T00:00:00.000Z`, // 07:00 WIB
         procuredAtUtc: `${DAY}T00:30:00.000Z`,
         marketSource: 'Pasar Flow',
         sourceType: 'market',
@@ -131,8 +132,10 @@ describe('Dataset Feature End-to-End Flow (Fase 8)', () => {
         shrimpLengthCm: 12.5,
         totalWeightG: 485.5,
         initialCondition: 'dead',
-        initialTempC: 8.2,
-        arrivedAtUtc: `${DAY}T05:00:00.000Z`, // ~4h45m
+        initialTempC: 2.5,
+        // Lintas hari: satu-satunya cara >3 jam tanpa keluar jendela 05:00–08:00.
+        arrivedAtUtc: '2099-07-08T01:00:00.000Z', // 08:00 WIB besok
+        coolerTempDepartureC: 1.0,
         coolerTempMarketC: 1.2,
         coolerTempLabC: 3.8,
       })
@@ -143,6 +146,7 @@ describe('Dataset Feature End-to-End Flow (Fase 8)', () => {
   it('membuat batch + 2 grup + sesi H0 dengan split baseline/sampel benar', async () => {
     const batchRes = await createBatch(
       post(adminCookie, 'http://localhost:3000/api/v1/batches', {
+        departedAtUtc: `${DAY}T00:00:00.000Z`, // 07:00 WIB
         procuredAtUtc: `${DAY}T00:30:00.000Z`,
         marketSource: 'Pasar Flow',
         sourceType: 'market',
@@ -150,8 +154,9 @@ describe('Dataset Feature End-to-End Flow (Fase 8)', () => {
         shrimpLengthCm: 12.5,
         totalWeightG: 485.5,
         initialCondition: 'dead',
-        initialTempC: 8.2,
-        arrivedAtUtc: `${DAY}T02:00:00.000Z`,
+        initialTempC: 2.5,
+        arrivedAtUtc: `${DAY}T01:00:00.000Z`, // 08:00 WIB
+        coolerTempDepartureC: 1.0,
         coolerTempMarketC: 1.2,
         coolerTempLabC: 3.8,
       })

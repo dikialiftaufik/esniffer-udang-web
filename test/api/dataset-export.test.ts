@@ -253,6 +253,11 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
     const lines = metaText.split('\r\n').filter((l) => l.length > 0);
     assert.strictEqual(lines[0].split(',')[0], 'batch_id');
     const headers = lines[0].split(',');
+    // Indeks dicari dari header, bukan angka mati: penambahan kolom baru
+    // (keberangkatan) tidak boleh membuat test rapuh.
+    const col = (name: string): number => headers.indexOf(name);
+    assert.ok(headers.includes('departed_date') && headers.includes('departed_time_wib'));
+    assert.ok(headers.includes('cooler_temp_departure_c'), 'revisi: suhu saat berangkat');
     assert.ok(headers.includes('procured_date'), 'butir 5: kolom tanggal beli');
     assert.ok(headers.includes('procured_time_wib'), 'butir 5: kolom jam beli WIB');
     assert.ok(headers.includes('arrived_date') && headers.includes('arrived_time_wib'));
@@ -263,32 +268,36 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
     assert.strictEqual(lines.length, 3); // header + SR (punya sesi) + SD (no_session)
 
     const sr = lines.find((l) => l.includes(GROUP))!.split(',');
-    assert.strictEqual(sr[0], BATCH);
-    assert.strictEqual(sr[1], '2099-06-06'); // procured_date (UTC+7 dari 00:30Z)
-    assert.strictEqual(sr[2], '07:30:00'); // procured_time_wib
-    assert.strictEqual(sr[3], 'Pasar Export');
-    assert.strictEqual(sr[7], '12.5'); // shrimp_length_cm batch
-    assert.strictEqual(sr[8], '485.5');
-    assert.strictEqual(sr[11], '2099-06-06'); // arrived_date
-    assert.strictEqual(sr[12], '09:00:00'); // arrived_time_wib
-    assert.strictEqual(sr[13], '1.2'); // cooler_temp_market_c
-    assert.strictEqual(sr[14], '3.8'); // cooler_temp_lab_c
-    assert.strictEqual(sr[19], GROUP);
-    assert.strictEqual(sr[20], 'room_temp');
-    assert.strictEqual(sr[24], '482'); // lab_weight_before_g
-    assert.strictEqual(sr[25], '478.5'); // lab_weight_after_g
-    assert.strictEqual(sr[26], '4'); // sample_shrimp_count
-    assert.strictEqual(sr[27], SESSION);
-    assert.strictEqual(sr[29], '0');
-    assert.strictEqual(sr[32], 'complete');
-    assert.strictEqual(sr[33], 'true');
+    assert.strictEqual(sr[col('batch_id')], BATCH);
+    assert.strictEqual(sr[col('procured_date')], '2099-06-06'); // UTC+7 dari 00:30Z
+    assert.strictEqual(sr[col('procured_time_wib')], '07:30:00');
+    assert.strictEqual(sr[col('market_source')], 'Pasar Export');
+    assert.strictEqual(sr[col('shrimp_length_cm')], '12.5');
+    assert.strictEqual(sr[col('total_weight_g')], '485.5');
+    assert.strictEqual(sr[col('arrived_date')], '2099-06-06');
+    assert.strictEqual(sr[col('arrived_time_wib')], '09:00:00');
+    // Baris lama tanpa keberangkatan: sel dikosongkan, bukan diisi nilai karangan.
+    assert.strictEqual(sr[col('departed_date')], '');
+    assert.strictEqual(sr[col('departed_time_wib')], '');
+    assert.strictEqual(sr[col('cooler_temp_departure_c')], '');
+    assert.strictEqual(sr[col('cooler_temp_market_c')], '1.2');
+    assert.strictEqual(sr[col('cooler_temp_lab_c')], '3.8');
+    assert.strictEqual(sr[col('group_id')], GROUP);
+    assert.strictEqual(sr[col('storage_condition')], 'room_temp');
+    assert.strictEqual(sr[col('lab_weight_before_g')], '482');
+    assert.strictEqual(sr[col('lab_weight_after_g')], '478.5');
+    assert.strictEqual(sr[col('sample_shrimp_count')], '4');
+    assert.strictEqual(sr[col('session_id')], SESSION);
+    assert.strictEqual(sr[col('elapsed_hours')], '0');
+    assert.strictEqual(sr[col('session_status')], 'complete');
+    assert.strictEqual(sr[col('warmup_done')], 'true');
 
     const sd = lines.find((l) => l.includes(`${BATCH}-SD`))!.split(',');
-    assert.strictEqual(sd[19], `${BATCH}-SD`);
-    assert.strictEqual(sd[20], 'cold');
-    assert.strictEqual(sd[25], '476.2'); // lab_weight_after_g grup dingin
-    assert.strictEqual(sd[27], ''); // session_id kosong
-    assert.strictEqual(sd[32], 'no_session'); // ditandai jelas
+    assert.strictEqual(sd[col('group_id')], `${BATCH}-SD`);
+    assert.strictEqual(sd[col('storage_condition')], 'cold');
+    assert.strictEqual(sd[col('lab_weight_after_g')], '476.2');
+    assert.strictEqual(sd[col('session_id')], '');
+    assert.strictEqual(sd[col('session_status')], 'no_session');
   });
 
   it('4b. metadata batch tanpa grup: semua baris selebar header', async () => {
@@ -298,6 +307,7 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
     await prisma.collectionBatch.create({
       data: {
         batchId: 'BT-20990606-02',
+        departedAtUtc: new Date('2099-06-06T00:00:00.000Z'), // 07:00 WIB
         procuredAtUtc: new Date('2099-06-06T00:30:00.000Z'),
         marketSource: 'Pasar Export',
         sourceType: 'MARKET',
@@ -308,6 +318,7 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
         initialCondition: 'DEAD',
         initialTempC: 8.2,
         arrivedAtUtc: new Date('2099-06-06T02:00:00.000Z'),
+        coolerTempDepartureC: 1.0,
         coolerTempMarketC: 1.2,
         coolerTempLabC: 3.8,
         operatorId: admin.id,
@@ -327,6 +338,12 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
       assert.strictEqual(line.split(',').length, width);
     }
     assert.ok(lines[1].includes('no_session'));
+
+    const headers = lines[0].split(',');
+    const row = lines[1].split(',');
+    assert.strictEqual(row[headers.indexOf('departed_date')], '2099-06-06');
+    assert.strictEqual(row[headers.indexOf('departed_time_wib')], '07:00:00');
+    assert.strictEqual(row[headers.indexOf('cooler_temp_departure_c')], '1');
   });
 
   it('5. format tidak dikenal ditolak 422', async () => {

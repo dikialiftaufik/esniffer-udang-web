@@ -12,6 +12,8 @@
 
 export interface BatchDraft {
   step?: number;
+  departedAt?: string;
+  coolerDeparture?: string;
   procuredAt?: string;
   arrivedAt?: string;
   marketSource?: string;
@@ -36,7 +38,12 @@ export interface BatchDraft {
   groupCaptionsSd?: string[];
 }
 
-const BATCH_DRAFT_KEY = 'esniffer:batch-draft-v2';
+/**
+ * Kunci penyimpanan draf. Dinaikkan ke v3 saat susunan field/langkah berubah
+ * (keberangkatan + suhu berangkat): draf v2 tidak lagi cocok dengan form ini,
+ * jadi sengaja diabaikan dan dibiarkan kedaluwarsa sendiri.
+ */
+export const BATCH_DRAFT_KEY = 'esniffer:batch-draft-v3';
 
 /** Draf dianggap kedaluwarsa setelah 7 hari. */
 export const DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -72,6 +79,7 @@ export const draftMeaningful = (d: BatchDraft): boolean =>
       'totalWeightG',
       'initialCondition',
       'initialTempC',
+      'coolerDeparture',
       'coolerMarket',
       'coolerLab',
     ] as const
@@ -84,6 +92,8 @@ export const draftMeaningful = (d: BatchDraft): boolean =>
 /** True bila draf masih memuat isi apa pun. */
 const hasAnyContent = (d: BatchDraft): boolean => {
   const scalars = [
+    'departedAt',
+    'coolerDeparture',
     'procuredAt',
     'arrivedAt',
     'marketSource',
