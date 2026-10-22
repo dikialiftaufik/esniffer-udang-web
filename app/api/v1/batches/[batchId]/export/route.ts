@@ -49,11 +49,16 @@ export async function GET(
       const num = (v: { toNumber(): number } | null | undefined): number | '' =>
         v === null || v === undefined ? '' : v.toNumber();
       const dt = (v: Date | null | undefined): string => (v ? v.toISOString() : '');
+      const departed = full.departedAtUtc
+        ? toWibParts(full.departedAtUtc)
+        : { date: '', time: '' };
       const procured = toWibParts(full.procuredAtUtc);
       const arrived = toWibParts(full.arrivedAtUtc);
       const photoCount = await prisma.batchPhoto.count({ where: { batchId } });
       const batchBlock = [
         full.batchId,
+        departed.date,
+        departed.time,
         procured.date,
         procured.time,
         full.marketSource,
@@ -66,6 +71,7 @@ export async function GET(
         num(full.initialTempC),
         arrived.date,
         arrived.time,
+        num(full.coolerTempDepartureC),
         num(full.coolerTempMarketC),
         num(full.coolerTempLabC),
         full.iceToShrimpRatio,

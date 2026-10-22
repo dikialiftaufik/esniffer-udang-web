@@ -6,6 +6,7 @@ import {
   removeBatchDraft,
   draftMeaningful,
   DRAFT_MAX_AGE_MS,
+  BATCH_DRAFT_KEY,
   type BatchDraft,
 } from '../lib/batch-draft.ts';
 
@@ -26,7 +27,7 @@ class MemoryStorage {
   }
 }
 
-const DRAFT_KEY = 'esniffer:batch-draft-v2';
+const DRAFT_KEY = BATCH_DRAFT_KEY;
 
 describe('Batch draft (revisi putaran 2, butir 13)', () => {
   const before = globalThis.localStorage;

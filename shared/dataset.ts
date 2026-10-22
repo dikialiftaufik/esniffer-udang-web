@@ -21,6 +21,13 @@ export const WIB_OFFSET_MINUTES = 7 * 60;
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 export const MAX_PHOTO_CAPTION_LENGTH = 140;
 
+// Rentang suhu domain (revisi): cool box dan suhu awal udang -10..10 °C.
+// Satu sumber kebenaran untuk form wizard, API, dan constraint DB.
+export const COOLER_TEMP_MIN_C = -10;
+export const COOLER_TEMP_MAX_C = 10;
+export const INITIAL_TEMP_MIN_C = -10;
+export const INITIAL_TEMP_MAX_C = 10;
+
 // Durasi baseline udara bersih per sesi (PRD Tahap D): 2 menit pertama.
 export const BASELINE_SECONDS = 120;
 
@@ -212,11 +219,20 @@ export function formatWibLabel(dateUtc: Date): string {
   return `${wibStr} → tersimpan ${dateUtc.toISOString()}`;
 }
 
-/** Jendela pengadaan 06:00–08:00 WIB (PRD Tahap A), dinilai dari Date UTC. */
+/**
+ * Jendela pengadaan 05:00–08:00 WIB (inklusif), dinilai dari Date UTC.
+ * Berlaku untuk ketiga titik waktu kunjungan: berangkat, beli, dan tiba di lab.
+ */
+export const PROCUREMENT_WINDOW_START_MINUTES = 5 * 60;
+export const PROCUREMENT_WINDOW_END_MINUTES = 8 * 60;
+
 export function isProcurementWindow(dateUtc: Date): boolean {
   const wibHour =
     (dateUtc.getUTCHours() + WIB_OFFSET_MINUTES / 60) % 24;
   const wibMinute = dateUtc.getUTCMinutes();
   const totalMinutes = wibHour * 60 + wibMinute;
-  return totalMinutes >= 6 * 60 && totalMinutes <= 8 * 60;
+  return (
+    totalMinutes >= PROCUREMENT_WINDOW_START_MINUTES &&
+    totalMinutes <= PROCUREMENT_WINDOW_END_MINUTES
+  );
 }

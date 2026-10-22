@@ -10,6 +10,10 @@ import {
   draftMeaningful,
 } from '../../../lib/batch-draft.ts';
 import {
+  COOLER_TEMP_MAX_C,
+  COOLER_TEMP_MIN_C,
+  INITIAL_TEMP_MAX_C,
+  INITIAL_TEMP_MIN_C,
   MAX_PHOTO_CAPTION_LENGTH,
   formatWibDateTime,
   wibDateTimeLocal,
@@ -79,6 +83,8 @@ const DRAFT_SAVE_DEBOUNCE_MS = 800;
 /** Keadaan form yang disimpan sebagai draf. */
 interface DraftState {
   step: number;
+  departedAt: string;
+  coolerDeparture: string;
   procuredAt: string;
   arrivedAt: string;
   marketSource: string;
@@ -110,6 +116,7 @@ const formIsPristine = (s: DraftState): boolean => {
   return (
     s.marketSource.trim() === '' &&
     s.sourceType === 'market' &&
+    s.coolerDeparture.trim() === '' &&
     s.shrimpCount === '12' &&
     s.shrimpLengthCm.trim() === '' &&
     s.totalWeightG.trim() === '' &&
@@ -312,10 +319,12 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
   const errorRef = useRef<HTMLDivElement>(null);
   const { message: notice, notify, dismiss } = useSuccessNotice();
 
-  // Tahap A — pengadaan
-  // Butir 5: kedua waktu mulai terisi dari jam device (peramban) saat halaman
-  // dibuka; tetap dapat diedit manual sebelum disimpan. Lazy initializer —
-  // jam device bukan state eksternal yang perlu disinkronkan lewat effect.
+  // Tahap A — keberangkatan
+  // Butir 5: waktu berangkat/beli/tiba mulai terisi dari jam device (peramban)
+  // saat halaman dibuka; tetap dapat diedit manual sebelum disimpan.
+  const [departedAt, setDepartedAt] = useState(() =>
+    str(draft.departedAt, wibDateTimeLocal(new Date()))
+  );
   const [procuredAt, setProcuredAt] = useState(() =>
     str(draft.procuredAt, wibDateTimeLocal(new Date()))
   );
@@ -330,8 +339,9 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
   const [arrivedAt, setArrivedAt] = useState(() =>
     str(draft.arrivedAt, wibDateTimeLocal(new Date()))
   );
-  // Butir 7: dua suhu cool box yang berbeda makna — saat di pasar (tercatat
-  // lama diDB sebagai cooler_temp_min_c) dan saat di lab (cooler_temp_max_c).
+  // Revisi: tiga suhu cool box — saat berangkat, di pasar, dan di lab.
+  // Nilai default kolom lama (min/max) tetap dipertahankan sebagai asal data.
+  const [coolerDeparture, setCoolerDeparture] = useState(() => str(draft.coolerDeparture, ''));
   const [coolerMarket, setCoolerMarket] = useState(() => str(draft.coolerMarket, ''));
   const [coolerLab, setCoolerLab] = useState(() => str(draft.coolerLab, ''));
   const [deviationAck, setDeviationAck] = useState(
@@ -377,6 +387,8 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
     }
     const state: DraftState = {
       step,
+      departedAt,
+      coolerDeparture,
       procuredAt,
       arrivedAt,
       marketSource,
@@ -403,6 +415,8 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
       }
       saveBatchDraft({
         step,
+        departedAt,
+        coolerDeparture,
         procuredAt,
         arrivedAt,
         marketSource,
@@ -426,6 +440,8 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
     return () => clearTimeout(timer);
   }, [
     step,
+    departedAt,
+    coolerDeparture,
     procuredAt,
     arrivedAt,
     marketSource,
@@ -470,6 +486,7 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
     skipDraftSave.current = true;
     setDraftDismissed(true);
     setStep(0);
+    setDepartedAt(now);
     setProcuredAt(now);
     setArrivedAt(now);
     setMarketSource('');
@@ -479,6 +496,7 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
     setTotalWeightG('');
     setInitialCondition('dead');
     setInitialTempC('');
+    setCoolerDeparture('');
     setCoolerMarket('');
     setCoolerLab('');
     setDeviationAck(false);
@@ -490,24 +508,28 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
 
   const fillTestData = () => {
     // Tanggal kalender WIB hari ini (UTC+7).
-    const wibDate = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);    // Beli di pasar 07:20 (dalam jendela 06:00–08:00) → tiba kembali
-    // di lab 07:55 (perjalanan 35 menit).
+    const wibDate = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);    // Berangkat 07:00 → beli 07:20 (dalam jendela 05:00–08:00) →
+    // tiba kembali di lab 07:55 (perjalanan 35 menit).
+    const departed = `${wibDate}T07:00`;
     const procured = `${wibDate}T07:20`;
 
     // Isi ulang berarti mengganti seluruh form.
     setDeviationAck(false);
 
-    // Tahap A — pengadaan
-    setProcuredAt(procured);
+    // Tahap A — keberangkatan & sumber
+    setDepartedAt(departed);
+    setCoolerDeparture('1.0');
     setMarketSource('Pasar Ciroyom');
     setSourceType('market');
+
+    // Tahap B — pembelian, kedatangan, kondisi, dokumentasi
+    setProcuredAt(procured);
+    setArrivedAt(`${wibDate}T07:55`);
     setShrimpCount('12');
     setShrimpLengthCm('12.5'); // panjang representatif saat beli
     setTotalWeightG('480');
     setInitialCondition('dead');
-    setInitialTempC('8.5'); // udang baru dibeli, masih ada esnya
-    // Tiba di lab (bagian pengadaan)
-    setArrivedAt(`${wibDate}T07:55`);
+    setInitialTempC('2.5'); // udang baru dibeli, masih ada esnya
     setCoolerMarket('1.2');
     setCoolerLab('3.6');
     // Tahap C — kelompok SR (suhu ruang) dan SD (dingin)
@@ -550,17 +572,21 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
   // Aturannya tinggal di lib/batch-wizard.ts: fungsi murni yang punya test unit.
 
   const validateStepA = (): Errors =>
-    validateWizardStepA({ procuredAt, arrivedAt, marketSource, deviationAck });
+    validateWizardStepA({ departedAt, coolerDeparture, marketSource, sourceType });
 
-  // Tahap B — kondisi udang, cool box, dan foto dokumentasi (butir 12).
+  // Tahap B — pembelian, kedatangan, kondisi udang, cool box, dan foto (butir 12).
   const validateStepB = (): Errors =>
     validateWizardStepB({
+      departedAt,
+      procuredAt,
+      arrivedAt,
       shrimpCount,
       shrimpLengthCm,
       totalWeightG,
       initialTempC,
       coolerMarket,
       coolerLab,
+      deviationAck,
     });
 
   const validateGroup = (prefix: 'sr' | 'sd', g: GroupForm): Errors =>
@@ -664,7 +690,7 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
   };
 
   const handleSubmit = async () => {
-    const errs = { ...validateStepA(), ...validateStepC() };
+    const errs = { ...validateStepA(), ...validateStepB(), ...validateStepC() };
     // Foto batch dan foto tiap grup sama-sama wajib ber-caption bila ada.
     const captionError = (photos: PhotoGroup): string | null => {
       const bad = photos.captions.findIndex(
@@ -697,6 +723,7 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
     setError(null);
     try {
       const batch = await postJson('/api/v1/batches', {
+        departedAtUtc: wibInputToUtcIso(departedAt),
         procuredAtUtc: wibInputToUtcIso(procuredAt),
         marketSource: marketSource.trim(),
         sourceType,
@@ -706,6 +733,7 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
         initialCondition,
         initialTempC: Number(initialTempC),
         arrivedAtUtc: wibInputToUtcIso(arrivedAt),
+        coolerTempDepartureC: Number(coolerDeparture),
         coolerTempMarketC: Number(coolerMarket),
         coolerTempLabC: Number(coolerLab),
         deviationAcknowledged: deviationAck,
@@ -752,7 +780,7 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
     }
   };
 
-  const steps = ['Pengadaan', 'Kondisi & dokumentasi', 'Pengelompokan'];
+  const steps = ['Pengadaan', 'Kondisi & Dokumentasi', 'Pengelompokan'];
 
   const radioRow = (
     name: string,
@@ -858,16 +886,12 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
               ['chamber', 'Dalam chamber'],
               ['plain_fridge', 'Langsung di kulkas, tanpa chamber'],
             ])}
-            <p className={hintCls}>
-              Pilih chamber bila udang dan sensor berada bersama di chamber; pilih kulkas bila udang hanya
-              disimpan di kulkas biasa.
-            </p>
           </div>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-labTempC`}>
-              Suhu udang sebelum observasi (°C)
+              Suhu udang (°C)
               {reqMark}
             </label>
             <input
@@ -978,7 +1002,7 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
           </div>
           <div className={fieldCls}>
             <label className={labelCls} htmlFor={`${prefix}-labWeightAfterG`}>
-              Berat sampel sesudah observasi (g)
+              Berat total udang (g)
               {reqMark}
             </label>
             <input
@@ -1118,76 +1142,93 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
           }}
         >
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className={fieldCls}>
-            <label className={labelCls} htmlFor="procuredAt">
-              Tanggal dan jam beli (WIB)
-              {reqMark}
-            </label>
-            <input
-              id="procuredAt"
-              name="procuredAt"
-              type="datetime-local"
-              autoComplete="off"
-              value={procuredAt}
-              aria-required="true"
-              aria-invalid={!!fieldErrors.procuredAt}
-              onChange={(e) => {
-                setProcuredAt(e.target.value);
-                revalidateLive(0, { procuredAt: fieldErrors.procuredAt });
-              }}
-              className={clsFor('procuredAt')}
-            />
-            {fieldErrors.procuredAt ? (
-              fieldMessage('procuredAt')
-            ) : (
-              <p className={hintCls}>Diisi otomatis dari jam device ini — pastikan jam device benar dulu. Wajib pagi 06:00–08:00 WIB dan sebelum jam tiba.</p>
-            )}
-          </div>
-          <div className={fieldCls}>
-            <label className={labelCls} htmlFor="arrivedAt">
-              Tanggal dan jam tiba di lab (WIB)
-              {reqMark}
-            </label>
-            <input
-              id="arrivedAt"
-              name="arrivedAt"
-              type="datetime-local"
-              autoComplete="off"
-              value={arrivedAt}
-              aria-required="true"
-              aria-invalid={!!fieldErrors.arrivedAt}
-              onChange={(e) => {
-                setArrivedAt(e.target.value);
-                revalidateLive(0, { arrivedAt: fieldErrors.arrivedAt });
-              }}
-              className={clsFor('arrivedAt')}
-            />
-            {fieldErrors.arrivedAt ? (
-              fieldMessage('arrivedAt')
-            ) : (
-              <p className={hintCls}>Diisi dari jam device ini; perbarui saat benar-benar tiba di lab. Jam beli harus sebelum ini.</p>
-            )}
-          </div>
-          </div>
-          {durationHours !== null && !fieldErrors.arrivedAt && (
-            <p aria-live="polite" className={`text-xs font-mono ${overDuration ? 'text-rose-300' : 'text-emerald-300'}`}>
-              Durasi: {durationFmt.format(durationHours)} jam {overDuration ? '(melebihi 3 jam)' : '(dalam batas 3 jam)'}
-            </p>
-          )}
-          {overDuration && (
-            <label className="flex items-start gap-2.5 p-3 rounded-xl border border-rose-400/30 bg-rose-500/10 text-xs font-mono text-rose-200 cursor-pointer">
+            <div className={fieldCls}>
+              <label className={labelCls} htmlFor="departedAt">
+                Tanggal dan jam berangkat (WIB)
+                {reqMark}
+              </label>
               <input
-                type="checkbox"
-                checked={deviationAck}
+                id="departedAt"
+                name="departedAt"
+                type="datetime-local"
+                autoComplete="off"
+                value={departedAt}
+                aria-required="true"
+                aria-invalid={!!fieldErrors.departedAt}
                 onChange={(e) => {
-                  setDeviationAck(e.target.checked);
-                  revalidateLive(0, { arrivedAt: fieldErrors.arrivedAt });
+                  setDepartedAt(e.target.value);
+                  revalidateLive(0, { departedAt: fieldErrors.departedAt });
                 }}
-                className="mt-0.5 w-4 h-4 accent-rose-400"
+                className={clsFor('departedAt')}
               />
-              Catat sebagai deviasi cold-chain (durasi lebih dari 3 jam)
+              {fieldErrors.departedAt ? (
+                fieldMessage('departedAt')
+              ) : (
+                <p className={hintCls}>Berangkat dari lab menuju pasar. Wajib 05:00–08:00 WIB dan sebelum jam beli.</p>
+              )}
+            </div>
+            <div className={fieldCls}>
+              <label className={labelCls} htmlFor="coolerDeparture">
+                Suhu cool box saat berangkat (°C)
+                {reqMark}
+              </label>
+              <input
+                id="coolerDeparture"
+                name="coolerDeparture"
+                type="number"
+                min={COOLER_TEMP_MIN_C}
+                max={COOLER_TEMP_MAX_C}
+                step="0.1"
+                inputMode="decimal"
+                autoComplete="off"
+                value={coolerDeparture}
+                aria-required="true"
+                aria-invalid={!!fieldErrors.coolerDeparture}
+                onChange={(e) => {
+                  setCoolerDeparture(e.target.value);
+                  revalidateLive(0, { coolerDeparture: fieldErrors.coolerDeparture });
+                }}
+                placeholder="1.0…"
+                className={clsFor('coolerDeparture')}
+              />
+              {fieldErrors.coolerDeparture ? (
+                fieldMessage('coolerDeparture')
+              ) : (
+                <p className={hintCls}>
+                  Catat sebelum meninggalkan lab ({COOLER_TEMP_MIN_C} sampai {COOLER_TEMP_MAX_C} °C).
+                </p>
+              )}
+            </div>
+          </div>
+          <div className={fieldCls}>
+            <label className={labelCls} htmlFor="sourceType">
+              Jenis sumber
+              {reqMark}
             </label>
-          )}
+            <select
+              id="sourceType"
+              name="sourceType"
+              value={sourceType}
+              aria-required="true"
+              aria-invalid={!!fieldErrors.sourceType}
+              onChange={(e) => {
+                setSourceType(e.target.value);
+                revalidateLive(0, { sourceType: fieldErrors.sourceType });
+              }}
+              className={clsFor('sourceType')}
+            >
+              <option value="market" className="bg-slate-900">
+                Pasar
+              </option>
+              <option value="supermarket" className="bg-slate-900">
+                Supermarket
+              </option>
+              <option value="farm" className="bg-slate-900">
+                Tambak
+              </option>
+            </select>
+            {fieldErrors.sourceType ? fieldMessage('sourceType') : null}
+          </div>
           <div className={fieldCls}>
             <label className={labelCls} htmlFor="marketSource">
               Sumber
@@ -1215,20 +1256,9 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
               <p className={hintCls}>Nama lokasi pembelian, misal: Pasar Induk Kramat Jati, Supermarket X.</p>
             )}
           </div>
-          <div className={fieldCls}>
-            <span className={labelCls}>
-              Jenis sumber
-              {reqMark}
-            </span>
-            {radioRow('sourceType', sourceType, setSourceType, [
-              ['market', 'Pasar'],
-              ['supermarket', 'Supermarket'],
-              ['farm', 'Tambak'],
-            ])}
-          </div>
           <div className="sticky bottom-3 z-10 rounded-2xl bg-slate-900/85 backdrop-blur-md border border-white/10 shadow-lg p-2">
             <button type="submit" className={btnPrimary}>
-              Lanjut ke Kondisi & dokumentasi
+              Lanjut ke Kondisi & Dokumentasi
             </button>
           </div>
         </form>
@@ -1243,6 +1273,83 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
             goToStep(2);
           }}
         >
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className={fieldCls}>
+              <label className={labelCls} htmlFor="procuredAt">
+                Tanggal dan jam beli (WIB)
+                {reqMark}
+              </label>
+              <input
+                id="procuredAt"
+                name="procuredAt"
+                type="datetime-local"
+                autoComplete="off"
+                value={procuredAt}
+                aria-required="true"
+                aria-invalid={!!fieldErrors.procuredAt}
+                onChange={(e) => {
+                  setProcuredAt(e.target.value);
+                  revalidateLive(1, { procuredAt: fieldErrors.procuredAt });
+                }}
+                className={clsFor('procuredAt')}
+              />
+              {fieldErrors.procuredAt ? (
+                fieldMessage('procuredAt')
+              ) : (
+                <p className={hintCls}>
+                  Diisi otomatis dari jam device ini — pastikan jam device benar dulu. Wajib 05:00–08:00 WIB
+                  dan setelah jam berangkat.
+                </p>
+              )}
+            </div>
+            <div className={fieldCls}>
+              <label className={labelCls} htmlFor="arrivedAt">
+                Tanggal dan jam tiba di lab (WIB)
+                {reqMark}
+              </label>
+              <input
+                id="arrivedAt"
+                name="arrivedAt"
+                type="datetime-local"
+                autoComplete="off"
+                value={arrivedAt}
+                aria-required="true"
+                aria-invalid={!!fieldErrors.arrivedAt}
+                onChange={(e) => {
+                  setArrivedAt(e.target.value);
+                  revalidateLive(1, { arrivedAt: fieldErrors.arrivedAt });
+                }}
+                className={clsFor('arrivedAt')}
+              />
+              {fieldErrors.arrivedAt ? (
+                fieldMessage('arrivedAt')
+              ) : (
+                <p className={hintCls}>
+                  Perbarui saat benar-benar tiba di lab. Harus setelah jam beli, keduanya dalam
+                  05:00–08:00 WIB.
+                </p>
+              )}
+            </div>
+          </div>
+          {durationHours !== null && !fieldErrors.arrivedAt && (
+            <p aria-live="polite" className={`text-xs font-mono ${overDuration ? 'text-rose-300' : 'text-emerald-300'}`}>
+              Durasi: {durationFmt.format(durationHours)} jam {overDuration ? '(melebihi 3 jam)' : '(dalam batas 3 jam)'}
+            </p>
+          )}
+          {overDuration && (
+            <label className="flex items-start gap-2.5 p-3 rounded-xl border border-rose-400/30 bg-rose-500/10 text-xs font-mono text-rose-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={deviationAck}
+                onChange={(e) => {
+                  setDeviationAck(e.target.checked);
+                  revalidateLive(1, { arrivedAt: fieldErrors.arrivedAt });
+                }}
+                className="mt-0.5 w-4 h-4 accent-rose-400"
+              />
+              Catat sebagai deviasi cold-chain (durasi lebih dari 3 jam)
+            </label>
+          )}
           <div className={fieldCls}>
             <span className={labelCls}>
               Kondisi awal udang
@@ -1252,7 +1359,6 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
               ['dead', 'Mati saat dibeli'],
               ['alive', 'Hidup saat dibeli'],
             ])}
-            <p className={hintCls}>Kondisi udang saat dibeli.</p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className={fieldCls}>
@@ -1294,22 +1400,43 @@ function BatchWizardForm({ userId, apiFetch }: { userId: string; apiFetch: ApiFe
             {numberField('initialTempC', 'Suhu awal udang (°C)', initialTempC, (v) => {
               changeInitialTempC(v);
               revalidateLive(1, { initialTempC: fieldErrors.initialTempC });
-            }, { placeholder: '8.2…', hint: 'Ukur dengan termometer tusuk saat udang tiba.' })}
+            }, {
+              min: INITIAL_TEMP_MIN_C,
+              max: INITIAL_TEMP_MAX_C,
+              step: '0.1',
+              placeholder: '2.5…',
+              hint: `Ukur dengan termometer tusuk saat udang tiba (${INITIAL_TEMP_MIN_C} sampai ${INITIAL_TEMP_MAX_C} °C).`,
+            })}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {numberField('coolerMarket', 'Suhu cool box saat di pasar (°C)', coolerMarket, (v) => {
               setCoolerMarket(v);
               revalidateLive(1, { coolerMarket: fieldErrors.coolerMarket });
-            }, { placeholder: '1.2…', hint: 'Pasang termometer di es lalu catat saat membeli.' })}
+            }, {
+              min: COOLER_TEMP_MIN_C,
+              max: COOLER_TEMP_MAX_C,
+              step: '0.1',
+              placeholder: '1.2…',
+              hint: 'Pasang termometer di es lalu catat saat membeli.',
+            })}
             {numberField('coolerLab', 'Suhu cool box saat di lab (°C)', coolerLab, (v) => {
               setCoolerLab(v);
               revalidateLive(1, { coolerLab: fieldErrors.coolerLab });
-            }, { placeholder: '3.8…', hint: 'Catat lagi saat tiba di lab, sebelum observasi.' })}
+            }, {
+              min: COOLER_TEMP_MIN_C,
+              max: COOLER_TEMP_MAX_C,
+              step: '0.1',
+              placeholder: '3.8…',
+              hint: 'Catat lagi saat tiba di lab, sebelum observasi.',
+            })}
           </div>
-          <p className={hintCls}>Cool box dijaga 0–4 °C dengan rasio es:udang 2:1 di kedua titik ukur.</p>
+          <p className={hintCls}>
+            Protokol menjaga cool box 0–4 °C dengan rasio es:udang 2:1. Input menerima{' '}
+            {COOLER_TEMP_MIN_C} sampai {COOLER_TEMP_MAX_C} °C agar kondisi nyata di lapangan tetap tercatat.
+          </p>
           <PhotosBlock
             prefix="batch"
-            title="Foto kondisi awal"
+            title="Foto kondisi awal udang"
             hint="JPG/PNG sampai 5 MB (bisa tambah bertahap, tanpa batas jumlah). Tiap foto wajib ber-caption (mis. di pasar, sebelum chamber). Minimal 1 foto sebelum batch dikunci."
             error={fieldErrors.photos}
             onChange={setBatchPhotos}

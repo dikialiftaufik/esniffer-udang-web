@@ -14,7 +14,8 @@ import { hashPassword } from '../../lib/auth/password.ts';
 import { createSession as createAuthSession, buildSessionCookie } from '../../lib/auth/session.ts';
 
 const DAY = '2099-02-02';
-const PROCURED = `${DAY}T00:30:00.000Z`; // 07:30 WIB — dalam jendela 06:00–08:00
+const DEPARTED = `${DAY}T00:00:00.000Z`; // 07:00 WIB — dalam jendela 05:00–08:00
+const PROCURED = `${DAY}T00:30:00.000Z`; // 07:30 WIB — dalam jendela 05:00–08:00
 
 function postHeaders(cookie: string): Record<string, string> {
   return {
@@ -27,6 +28,7 @@ function postHeaders(cookie: string): Record<string, string> {
 
 function batchBody(overrides: Record<string, unknown> = {}) {
   return {
+    departedAtUtc: DEPARTED,
     procuredAtUtc: PROCURED,
     marketSource: 'Pasar Bebas Ketik Manual',
     sourceType: 'market',
@@ -34,8 +36,9 @@ function batchBody(overrides: Record<string, unknown> = {}) {
     shrimpLengthCm: 12.5,
     totalWeightG: 485.5,
     initialCondition: 'dead',
-    initialTempC: 8.2,
-    arrivedAtUtc: `${DAY}T02:00:00.000Z`,
+    initialTempC: 2.5,
+    arrivedAtUtc: `${DAY}T01:00:00.000Z`, // 08:00 WIB
+    coolerTempDepartureC: 1.0,
     coolerTempMarketC: 1.2,
     coolerTempLabC: 3.8,
     ...overrides,
@@ -115,6 +118,8 @@ describe('HTTP API v1: Dataset Batches, Groups, Sessions & Lock (Fase 3)', () =>
     assert.match(body.data.batchId, /^BT-20990202-\d{2}$/);
     assert.strictEqual(body.data.sourceType, 'market');
     assert.strictEqual(body.data.sizeGrade, 25); // Math.round(12 / 485.5 * 1000), dihitung server
+    assert.strictEqual(body.data.departedAtUtc, DEPARTED);
+    assert.strictEqual(body.data.coolerTempDepartureC, 1.0);
     assert.strictEqual(body.data.lockedAt, null);
     batchId = body.data.batchId;
   });
@@ -218,7 +223,7 @@ describe('HTTP API v1: Dataset Batches, Groups, Sessions & Lock (Fase 3)', () =>
     );
   });
 
-  it('3. POST /batches menolak tiba sebelum/saat beli (422)', async () => {
+  it('3. POST /batches menolak tiba sebelum/saat beli dan beli sebelum/saat berangkat (422)', async () => {
     // Tiba sebelum beli → tolak 422, bukan 500.
     const early = await createBatch(
       new Request('http://localhost:3000/api/v1/batches', {
@@ -242,10 +247,25 @@ describe('HTTP API v1: Dataset Batches, Groups, Sessions & Lock (Fase 3)', () =>
       })
     );
     assert.strictEqual(equal.status, 422);
+
+    // Beli sebelum/saat berangkat → tolak.
+    const beforeDeparture = await createBatch(
+      new Request('http://localhost:3000/api/v1/batches', {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify(batchBody({ procuredAtUtc: DEPARTED })),
+      })
+    );
+    assert.strictEqual(beforeDeparture.status, 422);
+    assert.strictEqual(
+      (await beforeDeparture.json()).error.message,
+      'Tanggal dan jam berangkat harus sebelum tanggal dan jam beli'
+    );
   });
 
   it('4. POST /batches menolak cold-chain >3 jam tanpa deviasi (422) dan menerima dengan deviasi', async () => {
-    const late = batchBody({ arrivedAtUtc: `${DAY}T04:00:00.000Z` });
+    // Lintas hari: satu-satunya cara >3 jam tanpa keluar jendela 05:00–08:00.
+    const late = batchBody({ arrivedAtUtc: '2099-02-03T01:00:00.000Z' }); // tiba 08:00 WIB besok
     const refused = await createBatch(
       new Request('http://localhost:3000/api/v1/batches', {
         method: 'POST',
@@ -265,7 +285,7 @@ describe('HTTP API v1: Dataset Batches, Groups, Sessions & Lock (Fase 3)', () =>
     assert.strictEqual(accepted.status, 201);
   });
 
-  it('5. POST /batches menolak di luar jendela 06:00–08:00 WIB dan field hilang (422)', async () => {
+  it('5. POST /batches menolak di luar jendela 05:00–08:00 WIB dan field hilang (422)', async () => {
     const outside = await createBatch(
       new Request('http://localhost:3000/api/v1/batches', {
         method: 'POST',
@@ -274,6 +294,34 @@ describe('HTTP API v1: Dataset Batches, Groups, Sessions & Lock (Fase 3)', () =>
       })
     );
     assert.strictEqual(outside.status, 422);
+
+    const earlyDeparture = await createBatch(
+      new Request('http://localhost:3000/api/v1/batches', {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify(batchBody({ departedAtUtc: `${DAY}T21:30:00.000Z` })), // 04:30 WIB
+      })
+    );
+    assert.strictEqual(earlyDeparture.status, 422);
+
+    const lateArrival = await createBatch(
+      new Request('http://localhost:3000/api/v1/batches', {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify(batchBody({ arrivedAtUtc: `${DAY}T02:30:00.000Z` })), // 09:30 WIB
+      })
+    );
+    assert.strictEqual(lateArrival.status, 422);
+
+    // Field wajib baru: batch tanpa keberangkatan ditolak, bukan diam-diam kosong.
+    const missingDeparture = await createBatch(
+      new Request('http://localhost:3000/api/v1/batches', {
+        method: 'POST',
+        headers: postHeaders(adminCookie),
+        body: JSON.stringify(batchBody({ departedAtUtc: undefined })),
+      })
+    );
+    assert.strictEqual(missingDeparture.status, 422);
 
     const missing = await createBatch(
       new Request('http://localhost:3000/api/v1/batches', {

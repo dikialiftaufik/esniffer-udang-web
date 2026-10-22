@@ -23,6 +23,8 @@ let chamberId: string;
 function batchData(overrides: Record<string, unknown> = {}) {
   return {
     batchId: BATCH,
+    // Keberangkatan 07:00 WIB, beli 07:30 WIB, tiba 09:00 WIB.
+    departedAtUtc: new Date('2099-01-01T00:00:00.000Z'),
     procuredAtUtc: new Date('2099-01-01T00:30:00.000Z'),
     marketSource: 'Pasar Bebas Ketik Manual',
     sourceType: 'MARKET' as const,
@@ -254,12 +256,49 @@ describe('Dataset Schema Integrity (Fase 1)', () => {
     );
   });
 
-  it('CHECK: suhu cooler di luar 0–4 ditolak', async () => {
+  it('CHECK: berangkat sebelum/saat beli ditolak, NULL tetap diterima (baris lama)', async () => {
+    await assert.rejects(
+      prisma.collectionBatch.create({
+        data: batchData({
+          batchId: 'BT-20990101-07',
+          departedAtUtc: new Date('2099-01-01T01:00:00.000Z'), // berangkat setelah beli
+        }),
+      })
+    );
+    // Baris historis tidak punya keberangkatan; CHECK lolos untuk NULL.
+    const legacy = await prisma.collectionBatch.create({
+      data: batchData({
+        batchId: 'BT-20990101-08',
+        departedAtUtc: null,
+        coolerTempDepartureC: null,
+      }),
+    });
+    assert.strictEqual(legacy.departedAtUtc, null);
+    assert.strictEqual(legacy.coolerTempDepartureC, null);
+    await prisma.collectionBatch.delete({ where: { id: legacy.id } });
+  });
+
+  it('CHECK: suhu cooler di luar -10..10 ditolak', async () => {
     await assert.rejects(
       prisma.collectionBatch.create({
         data: batchData({ batchId: 'BT-20990101-05', coolerTempLabC: 12.0 }),
       })
     );
+    await assert.rejects(
+      prisma.collectionBatch.create({
+        data: batchData({ batchId: 'BT-20990101-09', coolerTempDepartureC: -10.5 }),
+      })
+    );
+    // Batas baru: nilai yang dulu ditolak (mis. -1 dan 9) kini diterima.
+    const cold = await prisma.collectionBatch.create({
+      data: batchData({
+        batchId: 'BT-20990101-10',
+        coolerTempDepartureC: -1,
+        coolerTempMarketC: -1,
+        coolerTempLabC: 9,
+      }),
+    });
+    await prisma.collectionBatch.delete({ where: { id: cold.id } });
   });
 
   it('CHECK: format batch_id salah ditolak', async () => {

@@ -143,8 +143,11 @@ export const DATASET_CSV_HEADERS = [
  */
 export const DATASET_METADATA_CSV_HEADERS = [
   'batch_id',
-  // Revisi putaran 2 butir 5: timestamp beli/tiba dipecah menjadi kolom
-  // tanggal dan kolom jam WIB terpisah (konversi di pembuat CSV).
+  // Revisi putaran 2 butir 5: timestamp dipecah menjadi kolom tanggal dan
+  // kolom jam WIB terpisah (konversi di pembuat CSV). Revisi wizard:
+  // keberangkatan ikut dicatat, jadi kolomnya mendahului beli.
+  'departed_date',
+  'departed_time_wib',
   'procured_date',
   'procured_time_wib',
   'market_source',
@@ -157,7 +160,8 @@ export const DATASET_METADATA_CSV_HEADERS = [
   'initial_temp_c',
   'arrived_date',
   'arrived_time_wib',
-  // Revisi putaran 2 butir 7: min/max menjadi dua titik pengukuran.
+  // Revisi: tiga titik pengukuran cool box (berangkat, pasar, lab).
+  'cooler_temp_departure_c',
   'cooler_temp_market_c',
   'cooler_temp_lab_c',
   'ice_to_shrimp_ratio',
