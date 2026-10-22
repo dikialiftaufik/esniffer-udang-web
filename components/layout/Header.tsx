@@ -343,6 +343,7 @@ export default function Header() {
                   </Link>
                   <button
                     role="menuitem"
+                    aria-label="Logout"
                     ref={(el) => {
                       itemRefs.current[user.role === 'ADMIN' ? 2 : 1] = el;
                     }}

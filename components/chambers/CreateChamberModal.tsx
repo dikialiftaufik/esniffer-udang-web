@@ -59,12 +59,25 @@ function CreateChamberDialog({
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [newMqttDeviceId, setNewMqttDeviceId] = useState(initial.mqttDeviceId);
   const [newDeviceName, setNewDeviceName] = useState(initial.deviceName);
+  const [newDevicePassword, setNewDevicePassword] = useState('esp32_device_pass');
+  const [showPassword, setShowPassword] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Auxiliary data & status
   const [availableDevices, setAvailableDevices] = useState<DeviceItem[]>([]);
   const [isLoadingDevices, setIsLoadingDevices] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Creation completion data
+  const [createdSuccessData, setCreatedSuccessData] = useState<{
+    chamberCode: string;
+    chamberName: string;
+    deviceId: string | null;
+    devicePassword?: string;
+    mqttProvisioned?: boolean;
+    mqttMessage?: string | null;
+  } | null>(null);
 
   const modalRef = useRef<HTMLDivElement>(null);
   const firstInputRef = useRef<HTMLInputElement>(null);
@@ -114,14 +127,26 @@ function CreateChamberDialog({
     };
   }, [apiFetch]);
 
+  const handleFinish = React.useCallback(() => {
+    const targetCode = createdSuccessData?.chamberCode || code.trim().toUpperCase();
+    onClose();
+    router.push(`/chamber/${encodeURIComponent(targetCode)}`);
+  }, [createdSuccessData, code, onClose, router]);
+
   // Handle ESC key to close
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (createdSuccessData) {
+          handleFinish();
+        } else {
+          onClose();
+        }
+      }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [onClose, createdSuccessData, handleFinish]);
 
   const isAdmin = user?.role === 'ADMIN';
 
@@ -169,6 +194,7 @@ function CreateChamberDialog({
       }
 
       const createdChamber = chamberJson.data;
+      let provisionedInfo: { mqttProvisioned?: boolean; mqttMessage?: string | null } = {};
 
       // 2. Handle Device Assignment if requested
       if (deviceMode === 'new') {
@@ -181,12 +207,17 @@ function CreateChamberDialog({
             body: JSON.stringify({
               mqttDeviceId: cleanMqttId,
               name: newDeviceName.trim() || `Sensor Node ${cleanCode}`,
+              password: newDevicePassword.trim() || undefined,
             }),
           });
 
           if (devRes.ok) {
             const devJson = await devRes.json();
             devId = devJson.data.id;
+            provisionedInfo = {
+              mqttProvisioned: devJson.data.mqttProvisioned,
+              mqttMessage: devJson.data.mqttMessage,
+            };
           } else if (devRes.status === 409) {
             devId = cleanMqttId;
           }
@@ -211,18 +242,139 @@ function CreateChamberDialog({
         });
       }
 
-      // Notify parent & redirect to new chamber
+      // Notify parent list
       if (onChamberCreated) {
         onChamberCreated(createdChamber);
       }
-      onClose();
-      router.push(`/chamber/${encodeURIComponent(cleanCode)}`);
+
+      // If a new device with credentials was created, show summary & Arduino code snippet!
+      if (deviceMode === 'new' && newMqttDeviceId.trim()) {
+        setCreatedSuccessData({
+          chamberCode: cleanCode,
+          chamberName: cleanName,
+          deviceId: newMqttDeviceId.trim(),
+          devicePassword: newDevicePassword.trim(),
+          mqttProvisioned: provisionedInfo.mqttProvisioned,
+          mqttMessage: provisionedInfo.mqttMessage,
+        });
+      } else {
+        onClose();
+        router.push(`/chamber/${encodeURIComponent(cleanCode)}`);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Terjadi kesalahan sistem saat membuat chamber.');
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  // Render Success / Credentials Screen if created
+  if (createdSuccessData) {
+    const arduinoSnippet = `static const char DEVICE_ID[] = "${createdSuccessData.deviceId}";\nstatic const char MQTT_PASSWORD[] = "${createdSuccessData.devicePassword || ''}";`;
+
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 overflow-y-auto"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) handleFinish();
+        }}
+      >
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="bg-slate-900 border border-white/15 rounded-3xl max-w-xl w-full flex flex-col shadow-2xl overflow-hidden my-auto max-h-[90vh]"
+        >
+          {/* Header */}
+          <div className="flex justify-between items-center px-6 pt-5 pb-4 border-b border-white/10 shrink-0">
+            <div className="flex items-center gap-2.5">
+              <span className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center text-emerald-300">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              <div>
+                <h3 className="text-base font-bold text-white">Chamber Berhasil Didaftarkan!</h3>
+                <p className="text-xs font-mono text-white/50">{createdSuccessData.chamberName} ({createdSuccessData.chamberCode})</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1">
+            {createdSuccessData.deviceId && (
+              <div className="p-4 rounded-2xl bg-black/40 border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-mono font-bold text-white/80">Kredensial Perangkat MQTT:</span>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                    createdSuccessData.mqttProvisioned
+                      ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300'
+                      : 'bg-cyan-500/20 border-cyan-400/40 text-cyan-300'
+                  }`}>
+                    {createdSuccessData.mqttProvisioned ? '● Otomatis Terdaftar di Broker' : '● Disimpan di Database'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                  <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+                    <span className="text-white/40 block text-[10px]">DEVICE_ID:</span>
+                    <span className="text-cyan-300 font-bold">{createdSuccessData.deviceId}</span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+                    <span className="text-white/40 block text-[10px]">PASSWORD MQTT:</span>
+                    <span className="text-emerald-300 font-bold">{createdSuccessData.devicePassword || '—'}</span>
+                  </div>
+                </div>
+
+                {createdSuccessData.mqttMessage && (
+                  <p className="text-[11px] font-mono text-white/60">
+                    {createdSuccessData.mqttMessage}
+                  </p>
+                )}
+
+                {/* Arduino Snippet */}
+                {createdSuccessData.devicePassword && (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-mono text-white/70">
+                        Salin baris ini ke file Arduino (<code className="text-cyan-300">E_Sniffer_ESP32.ino</code>):
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(arduinoSnippet);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        }}
+                        className="text-[10px] font-mono text-cyan-300 hover:text-white px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 transition-all cursor-pointer"
+                      >
+                        {copied ? 'Tersalin ✓' : 'Salin Kode'}
+                      </button>
+                    </div>
+                    <pre className="p-2.5 rounded-xl bg-black/60 border border-white/10 font-mono text-xs text-emerald-200 overflow-x-auto">
+                      {arduinoSnippet}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <p className="text-xs font-mono text-white/60">
+              Upload baris konfigurasi di atas ke program Arduino ESP32 Anda, lalu buka dashboard untuk memantau data sensor secara real-time.
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-2 px-6 py-4 border-t border-white/10 shrink-0 bg-slate-900/90">
+            <button
+              type="button"
+              onClick={handleFinish}
+              className="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-mono font-bold shadow-lg shadow-cyan-950/30 transition-all cursor-pointer"
+            >
+              Buka Dashboard Chamber →
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -428,6 +580,46 @@ function CreateChamberDialog({
                       Sesuai topik MQTT: <code className="text-cyan-300">esniffer/{newMqttDeviceId || '...'}/telemetry</code>
                     </span>
                   </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label htmlFor="new-device-password" className="block text-[11px] font-mono text-white/70">
+                        Password MQTT Device <span className="text-rose-400">*</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const rand = Math.random().toString(36).substring(2, 10);
+                          setNewDevicePassword(`esp32_${rand}`);
+                        }}
+                        className="text-[10px] font-mono text-cyan-300 hover:text-cyan-200 underline cursor-pointer"
+                      >
+                        Acak Password
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <input
+                        id="new-device-password"
+                        type={showPassword ? 'text' : 'password'}
+                        required={deviceMode === 'new'}
+                        value={newDevicePassword}
+                        onChange={(e) => setNewDevicePassword(e.target.value)}
+                        placeholder="mis. esp32_device_pass"
+                        className="w-full px-3 py-1.5 pr-16 rounded-lg bg-black/40 border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-cyan-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono text-white/50 hover:text-white px-1.5 py-0.5 rounded bg-white/10 cursor-pointer"
+                      >
+                        {showPassword ? 'Sembunyi' : 'Lihat'}
+                      </button>
+                    </div>
+                    <span className="text-[10px] font-mono text-white/40">
+                      Didaftarkan ke broker Mosquitto via Dynamic Security.
+                    </span>
+                  </div>
+
                   <div>
                     <label htmlFor="new-device-name" className="block text-[11px] font-mono text-white/70 mb-1">
                       Nama Alat (Label)

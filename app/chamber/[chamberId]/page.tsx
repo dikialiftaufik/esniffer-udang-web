@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import MetricCard from '../../../components/ui/MetricCard';
 import ChartPanel from '../../../components/charts/ChartPanel';
 import ExportPanel from '../../../components/layout/ExportPanel';
@@ -9,10 +9,12 @@ import SensorCard from '../../../components/ui/SensorCard';
 import { useChamberLatest } from '../../../hooks/useChamberLatest';
 import { useChamberStream } from '../../../hooks/useChamberStream';
 import { useAuth } from '../../../components/auth/AuthProvider';
+import ConfirmDialog from '../../../components/ui/ConfirmDialog';
 
 const FRESHNESS_THRESHOLD_SECONDS = 15;
 
 export default function Dashboard() {
+  const router = useRouter();
   const params = useParams();
   const rawChamberId = params?.chamberId as string;
 
@@ -61,7 +63,34 @@ export default function Dashboard() {
   // Peringatan alat tanpa pasangan chamber (pesannya ditolak worker).
   // Dibaca dari endpoint kesehatan ingest agar tidak diam-diam hilang.
   const [ingestWarn, setIngestWarn] = useState<string | null>(null);
-  const { apiFetch } = useAuth();
+  const { apiFetch, user } = useAuth();
+
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleDeleteChamber = async () => {
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const targetId = resolvedChamberId || mappedChamberId || rawChamberId;
+      const res = await apiFetch(`/api/v1/chambers/${encodeURIComponent(targetId)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.error?.message || `Gagal menghapus chamber (HTTP ${res.status})`);
+      }
+      setIsDeleteDialogOpen(false);
+      router.replace('/');
+      router.refresh();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan saat menghapus chamber';
+      setDeleteError(msg);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -245,6 +274,32 @@ export default function Dashboard() {
           {renderRequestStatusPill()}
           {renderConnectionPill()}
           {renderFreshnessPill()}
+          {user?.role === 'ADMIN' && (
+            <button
+              type="button"
+              onClick={() => {
+                setDeleteError(null);
+                setIsDeleteDialogOpen(true);
+              }}
+              title={`Hapus ${chamberName}`}
+              className="ml-1 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-mono font-medium text-rose-300 hover:text-white bg-rose-500/15 hover:bg-rose-500/30 border border-rose-500/30 hover:border-rose-500/60 transition-colors focus:outline-none focus:ring-1 focus:ring-rose-400"
+            >
+              <svg
+                className="w-3 h-3 text-rose-300"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+                />
+              </svg>
+              <span>Hapus Chamber</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -350,6 +405,24 @@ export default function Dashboard() {
           compoundColorClass="text-amber-300"
         />
       </div>
+
+      <ConfirmDialog
+        open={isDeleteDialogOpen}
+        title={`Hapus ${chamberName}?`}
+        message={`Apakah Anda yakin ingin menghapus ${chamberName}? Jika belum ada data riwayat, chamber akan dihapus secara permanen. Jika sudah ada data sensor atau sesi pengukuran, chamber akan dinonaktifkan (diarsipkan) dengan aman tanpa menghilangkan riwayat.`}
+        confirmLabel="Ya, Hapus"
+        cancelLabel="Batal"
+        tone="danger"
+        busy={isDeleting}
+        error={deleteError}
+        onCancel={() => {
+          if (!isDeleting) {
+            setIsDeleteDialogOpen(false);
+            setDeleteError(null);
+          }
+        }}
+        onConfirm={handleDeleteChamber}
+      />
     </div>
   );
 }

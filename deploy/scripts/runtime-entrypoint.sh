@@ -23,6 +23,10 @@ if [ -n "${MQTT_PASSWORD_FILE:-}" ]; then
   MQTT_PASSWORD="$(read_required_secret MQTT_PASSWORD "$MQTT_PASSWORD_FILE")"
   export MQTT_PASSWORD
 fi
+if [ -n "${MQTT_ADMIN_PASSWORD_FILE:-}" ] && [ -r "${MQTT_ADMIN_PASSWORD_FILE:-}" ]; then
+  MQTT_ADMIN_PASSWORD="$(cat "$MQTT_ADMIN_PASSWORD_FILE")"
+  export MQTT_ADMIN_PASSWORD
+fi
 
 if [ -z "${DATABASE_URL:-}" ]; then
   database_password="$(read_required_secret DATABASE_PASSWORD "${POSTGRES_PASSWORD_FILE:-}")"

@@ -2,7 +2,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
 import { prisma, closeDb } from '../../lib/db/client.ts';
 import { GET as getChambersHandler, POST as createChamberHandler } from '../../app/api/v1/chambers/route.ts';
-import { GET as getChamberHandler, PATCH as patchChamberHandler } from '../../app/api/v1/chambers/[chamberId]/route.ts';
+import { GET as getChamberHandler, PATCH as patchChamberHandler, DELETE as deleteChamberHandler } from '../../app/api/v1/chambers/[chamberId]/route.ts';
 import { GET as getDevicesHandler, POST as createDeviceHandler } from '../../app/api/v1/devices/route.ts';
 import { GET as getDeviceHandler, PATCH as patchDeviceHandler } from '../../app/api/v1/devices/[deviceId]/route.ts';
 import { GET as getAssignmentsHandler, POST as createAssignmentHandler } from '../../app/api/v1/assignments/route.ts';
@@ -13,6 +13,8 @@ import { createSession, buildSessionCookie } from '../../lib/auth/session.ts';
 describe('HTTP API v1: Chambers, Devices, and Assignments CRUD & Integrity Tests', () => {
   let adminCookie = '';
   let adminUserId = '';
+  let viewerCookie = '';
+  let viewerUserId = '';
   const testPrefix = `test-${Date.now().toString().slice(-4)}`;
   const chamberCode = `CH-${testPrefix}`;
   const deviceMqttId = `esp32-${testPrefix}`;
@@ -34,19 +36,40 @@ describe('HTTP API v1: Chambers, Devices, and Assignments CRUD & Integrity Tests
 
     const { rawToken, expiresAt } = await createSession(adminUser.id);
     adminCookie = buildSessionCookie(rawToken, expiresAt).split(';')[0];
+
+    const viewerPasswordHash = await hashPassword('ViewerPass123!');
+    const viewerUser = await prisma.user.create({
+      data: {
+        email: `viewer-${testPrefix}@esniffer.local`,
+        passwordHash: viewerPasswordHash,
+        role: 'VIEWER',
+        isActive: true,
+      },
+    });
+    viewerUserId = viewerUser.id;
+    const viewerSession = await createSession(viewerUser.id);
+    viewerCookie = buildSessionCookie(viewerSession.rawToken, viewerSession.expiresAt).split(';')[0];
   });
 
   after(async () => {
-    // Bersihkan assignment, device, chamber, dan user
+    // Bersihkan sensor readings, assignment, device, chamber, dan user
+    if (createdChamberId) {
+      await prisma.sensorReading.deleteMany({ where: { chamberId: createdChamberId } });
+    }
     if (createdDeviceId) {
       await prisma.deviceAssignment.deleteMany({ where: { deviceId: createdDeviceId } });
       await prisma.device.deleteMany({ where: { id: createdDeviceId } });
     }
     if (createdChamberId) {
+      await prisma.deviceAssignment.deleteMany({ where: { chamberId: createdChamberId } });
       await prisma.chamber.deleteMany({ where: { id: createdChamberId } });
     }
     await prisma.authSession.deleteMany({ where: { userId: adminUserId } });
     await prisma.user.deleteMany({ where: { id: adminUserId } });
+    if (viewerUserId) {
+      await prisma.authSession.deleteMany({ where: { userId: viewerUserId } });
+      await prisma.user.deleteMany({ where: { id: viewerUserId } });
+    }
     await closeDb();
   });
 
@@ -153,6 +176,7 @@ describe('HTTP API v1: Chambers, Devices, and Assignments CRUD & Integrity Tests
       body: JSON.stringify({
         mqttDeviceId: deviceMqttId,
         name: `Test Device ${testPrefix}`,
+        password: 'esp32_test_password',
       }),
     });
 
@@ -160,6 +184,7 @@ describe('HTTP API v1: Chambers, Devices, and Assignments CRUD & Integrity Tests
     assert.strictEqual(res.status, 201);
     const body = await res.json();
     assert.strictEqual(body.data.mqttDeviceId, deviceMqttId);
+    assert.strictEqual(typeof body.data.mqttProvisioned, 'boolean');
     createdDeviceId = body.data.id;
 
     // Retry duplikat dengan instance Request baru (body stream tidak reuse)
@@ -302,5 +327,121 @@ describe('HTTP API v1: Chambers, Devices, and Assignments CRUD & Integrity Tests
     assert.strictEqual(endRes.status, 200);
     const endBody = await endRes.json();
     assert.strictEqual(endBody.data.activeUntil, '2026-09-20T00:00:00.000Z');
+  });
+
+  it('10. DELETE /api/v1/chambers/[chamberId] menolak request tanpa auth atau dengan role VIEWER (401/403)', async () => {
+    // Tanpa auth
+    const unauthReq = new Request(`http://localhost:3000/api/v1/chambers/${chamberCode}`, {
+      method: 'DELETE',
+      headers: { Origin: 'http://localhost:3000', Host: 'localhost:3000' },
+    });
+    const unauthRes = await deleteChamberHandler(unauthReq, { params: Promise.resolve({ chamberId: chamberCode }) });
+    assert.strictEqual(unauthRes.status, 401);
+
+    // Dengan role VIEWER
+    const viewerReq = new Request(`http://localhost:3000/api/v1/chambers/${chamberCode}`, {
+      method: 'DELETE',
+      headers: {
+        Cookie: viewerCookie,
+        Origin: 'http://localhost:3000',
+        Host: 'localhost:3000',
+      },
+    });
+    const viewerRes = await deleteChamberHandler(viewerReq, { params: Promise.resolve({ chamberId: chamberCode }) });
+    assert.strictEqual(viewerRes.status, 403);
+  });
+
+  it('11. DELETE /api/v1/chambers/[chamberId] melakukan hard-delete pada chamber kosong tanpa telemetri', async () => {
+    // Buat chamber kosong baru
+    const emptyCode = `CH-EMP-${testPrefix}`;
+    const createReq = new Request('http://localhost:3000/api/v1/chambers', {
+      method: 'POST',
+      headers: {
+        Cookie: adminCookie,
+        Origin: 'http://localhost:3000',
+        Host: 'localhost:3000',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        code: emptyCode,
+        name: `Empty Chamber ${testPrefix}`,
+      }),
+    });
+    const createRes = await createChamberHandler(createReq);
+    assert.strictEqual(createRes.status, 201);
+    const created = await createRes.json();
+    const emptyId = created.data.id;
+
+    // Hapus chamber kosong tersebut
+    const delReq = new Request(`http://localhost:3000/api/v1/chambers/${emptyCode}`, {
+      method: 'DELETE',
+      headers: {
+        Cookie: adminCookie,
+        Origin: 'http://localhost:3000',
+        Host: 'localhost:3000',
+      },
+    });
+    const delRes = await deleteChamberHandler(delReq, { params: Promise.resolve({ chamberId: emptyCode }) });
+    assert.strictEqual(delRes.status, 200);
+    const delBody = await delRes.json();
+    assert.strictEqual(delBody.data.deleted, true);
+    assert.strictEqual(delBody.data.mode, 'hard');
+
+    // Verifikasi chamber telah dihapus permanen dari basis data
+    const checkDb = await prisma.chamber.findUnique({ where: { id: emptyId } });
+    assert.strictEqual(checkDb, null);
+  });
+
+  it('12. DELETE /api/v1/chambers/[chamberId] melakukan soft-delete saat chamber memiliki riwayat telemetri', async () => {
+    // Buat 1 sensor reading yang terikat ke createdChamberId
+    await prisma.sensorReading.create({
+      data: {
+        messageId: `msg-${testPrefix}-1`,
+        payloadSha256: 'a'.repeat(64),
+        sequence: BigInt(1),
+        deviceId: createdDeviceId,
+        chamberId: createdChamberId,
+        assignmentId: createdAssignmentId,
+        bootId: '00000000-0000-0000-0000-000000000001',
+        historySequence: BigInt(990001),
+        sampleUptimeMs: BigInt(1000),
+        receivedAt: new Date(),
+        measuredAt: new Date(),
+        measurementTimeQuality: 'SYNCED',
+        rawPayload: {},
+        mq137Raw: 500,
+        mq137Quality: 'OK',
+        mq136Raw: 500,
+        mq136Quality: 'OK',
+        mq4Raw: 500,
+        mq4Quality: 'OK',
+        temperatureC: 25.0,
+        temperatureQuality: 'OK',
+        humidityPercent: 60.0,
+        humidityQuality: 'OK',
+      },
+    });
+
+    const delReq = new Request(`http://localhost:3000/api/v1/chambers/${chamberCode}`, {
+      method: 'DELETE',
+      headers: {
+        Cookie: adminCookie,
+        Origin: 'http://localhost:3000',
+        Host: 'localhost:3000',
+      },
+    });
+    const delRes = await deleteChamberHandler(delReq, { params: Promise.resolve({ chamberId: chamberCode }) });
+    assert.strictEqual(delRes.status, 200);
+    const delBody = await delRes.json();
+    assert.strictEqual(delBody.data.deleted, true);
+    assert.strictEqual(delBody.data.mode, 'soft');
+
+    // Verifikasi chamber tetap ada di DB namun ditandai isActive = false
+    const checkDb = await prisma.chamber.findUnique({ where: { id: createdChamberId } });
+    assert.ok(checkDb);
+    assert.strictEqual(checkDb!.isActive, false);
+
+    // Bersihkan sensor reading agar hook after() dapat membersihkan device & chamber
+    await prisma.sensorReading.deleteMany({ where: { chamberId: createdChamberId } });
   });
 });

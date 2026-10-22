@@ -118,6 +118,9 @@ services:
       APP_ORIGIN_ALLOWLIST: ${APP_ORIGIN_ALLOWLIST:-}
       MAX_EXPORT_ROWS: ${MAX_EXPORT_ROWS:-200000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MQTT_ADMIN_URL: ${MQTT_ADMIN_URL:-}
+      MQTT_ADMIN_USERNAME: ${MQTT_ADMIN_USERNAME:-}
+      MQTT_ADMIN_PASSWORD: ${MQTT_ADMIN_PASSWORD:-}
     secrets:
       - postgres_runtime_password
       - auth_secret
@@ -128,6 +131,7 @@ services:
     networks:
       - frontend
       - backend
+      - mqtt
     depends_on:
       postgres:
         condition: service_healthy

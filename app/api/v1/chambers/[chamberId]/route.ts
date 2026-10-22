@@ -122,3 +122,100 @@ export async function PATCH(
     return errorResponse(err, requestId, request);
   }
 }
+
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ chamberId: string }> }
+): Promise<Response> {
+  const requestId = getRequestId(request);
+
+  try {
+    verifyCsrfAndOrigin(request);
+    await requireAuth(request, ['ADMIN']);
+    const { chamberId } = await context.params;
+
+    const chamber = await prisma.chamber.findFirst({
+      where: UUID_REGEX.test(chamberId) ? { id: chamberId } : { code: chamberId },
+      include: {
+        _count: {
+          select: {
+            readings: true,
+            sessions: true,
+            sampleGroups: true,
+            assignments: true,
+          },
+        },
+      },
+    });
+
+    if (!chamber) {
+      throw notFound(`Chamber "${chamberId}" not found`);
+    }
+
+    // Periksa apakah ada data pembacaan langsung di chamber atau via riwayat assignment
+    let hasHistoricalData =
+      chamber._count.readings > 0 ||
+      chamber._count.sessions > 0 ||
+      chamber._count.sampleGroups > 0;
+
+    if (!hasHistoricalData && chamber._count.assignments > 0) {
+      const assignmentIds = (
+        await prisma.deviceAssignment.findMany({
+          where: { chamberId: chamber.id },
+          select: { id: true },
+        })
+      ).map((a) => a.id);
+
+      const linkedReadingsCount = await prisma.sensorReading.count({
+        where: { assignmentId: { in: assignmentIds } },
+      });
+
+      if (linkedReadingsCount > 0) {
+        hasHistoricalData = true;
+      }
+    }
+
+    if (!hasHistoricalData) {
+      // Hard delete: aman dihapus penuh karena tidak ada riwayat telemetri / sesi
+      await prisma.$transaction(async (tx) => {
+        await tx.deviceAssignment.deleteMany({
+          where: { chamberId: chamber.id },
+        });
+        await tx.chamber.delete({
+          where: { id: chamber.id },
+        });
+      });
+
+      return jsonResponse({
+        id: chamber.id,
+        code: chamber.code,
+        deleted: true,
+        mode: 'hard',
+        message: `Chamber "${chamber.name}" berhasil dihapus secara permanen.`,
+      });
+    }
+
+    // Soft delete: nonaktifkan chamber dan tutup assignment yang masih aktif
+    await prisma.$transaction(async (tx) => {
+      await tx.deviceAssignment.updateMany({
+        where: { chamberId: chamber.id, activeUntil: null },
+        data: { activeUntil: new Date() },
+      });
+      await tx.chamber.update({
+        where: { id: chamber.id },
+        data: { isActive: false },
+      });
+    });
+
+    return jsonResponse({
+      id: chamber.id,
+      code: chamber.code,
+      deleted: true,
+      mode: 'soft',
+      message: `Chamber "${chamber.name}" dinonaktifkan karena memiliki riwayat data telemetri.`,
+    });
+  } catch (err) {
+    return errorResponse(err, requestId, request);
+  }
+}
+

@@ -477,8 +477,15 @@ describe('Real Browser Dashboard & Auth Integration (Puppeteer + Google Chrome)'
     // Kunjungi chamber 1 yang sudah terautentikasi
     await page.goto(`${BASE_URL}/chamber/${chamber1Id}`, { waitUntil: 'networkidle2' });
 
-    // Cari tombol logout di header (aria-label="Logout")
-    const logoutBtn = await page.waitForSelector('button[aria-label="Logout"]');
+    // Cari tombol logout di header (buka menu akun jika terbungkus dalam dropdown)
+    let logoutBtn = await page.$('button[aria-label="Logout"]');
+    if (!logoutBtn) {
+      const profileBtn = await page.waitForSelector('button[aria-haspopup="menu"]', { timeout: 10000 });
+      if (profileBtn) {
+        await profileBtn.click();
+      }
+      logoutBtn = await page.waitForSelector('button[aria-label="Logout"]', { timeout: 5000 });
+    }
     assert.ok(logoutBtn, 'Tombol logout harus tersedia');
     await logoutBtn.click();
 

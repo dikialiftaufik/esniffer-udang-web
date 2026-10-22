@@ -10,6 +10,7 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   tone?: 'danger' | 'primary';
   busy?: boolean;
+  error?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -27,6 +28,7 @@ export default function ConfirmDialog({
   cancelLabel = 'Batal',
   tone = 'danger',
   busy = false,
+  error = null,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -73,6 +75,11 @@ export default function ConfirmDialog({
         <h3 id="confirm-dialog-title" className="text-base font-mono font-bold text-white">
           {title}
         </h3>
+        {error && (
+          <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-mono leading-relaxed">
+            {error}
+          </div>
+        )}
         <p id="confirm-dialog-message" className="text-[13px] font-mono text-white/75 leading-relaxed">
           {message}
         </p>

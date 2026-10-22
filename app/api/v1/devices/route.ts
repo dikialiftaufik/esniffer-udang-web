@@ -4,6 +4,7 @@ import { jsonResponse, errorResponse, getRequestId } from '../../../../lib/api/r
 import { parseLimit, parseRequiredString } from '../../../../lib/api/validation.ts';
 import { conflict, validationError } from '../../../../lib/api/errors.ts';
 import { isValidDeviceId } from '../../../../shared/topic.ts';
+import { isMosquittoAdminConfigured, provisionMqttDevice } from '../../../../lib/mosquitto-admin.ts';
 import { Prisma } from '@prisma/client';
 
 export async function GET(request: Request): Promise<Response> {
@@ -133,6 +134,9 @@ export async function POST(request: Request): Promise<Response> {
     const body = await request.json();
     const mqttDeviceId = parseRequiredString(body?.mqttDeviceId, 'mqttDeviceId', 3, 64);
     const name = parseRequiredString(body?.name, 'name', 2, 100);
+    const password = typeof body?.password === 'string' && body.password.trim().length > 0
+      ? body.password.trim()
+      : null;
 
     if (!isValidDeviceId(mqttDeviceId)) {
       throw validationError(
@@ -145,6 +149,19 @@ export async function POST(request: Request): Promise<Response> {
     });
     if (existing) {
       throw conflict(`Device with mqttDeviceId "${mqttDeviceId}" already exists`);
+    }
+
+    let mqttProvisioned = false;
+    let mqttMessage: string | null = null;
+
+    if (password) {
+      if (isMosquittoAdminConfigured()) {
+        const provRes = await provisionMqttDevice(mqttDeviceId, password);
+        mqttProvisioned = provRes.provisioned;
+        mqttMessage = provRes.message || provRes.error || null;
+      } else {
+        mqttMessage = `Mosquitto Dynsec belum aktif. Jalankan manual di server: mosquitto_passwd /mosquitto/config/passwords.txt ${mqttDeviceId}`;
+      }
     }
 
     const device = await prisma.device.create({
@@ -162,6 +179,8 @@ export async function POST(request: Request): Promise<Response> {
         name: device.name,
         isActive: device.isActive,
         connectionState: device.connectionState,
+        mqttProvisioned,
+        mqttMessage,
         createdAt: device.createdAt.toISOString(),
         updatedAt: device.updatedAt.toISOString(),
       },
