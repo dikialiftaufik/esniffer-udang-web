@@ -7,6 +7,7 @@ import {
   serializeBatch,
   serializeGroup,
   serializeSession,
+  parseBatchFields,
 } from '../../../../../lib/api/dataset.ts';
 
 export async function GET(
@@ -35,13 +36,14 @@ export async function GET(
     const photos = await prisma.batchPhoto.findMany({
       where: { batchId },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-      // Butir 2: groupId ikut agar UI bisa menautkan foto ke grupnya.
-      select: { url: true, caption: true, groupId: true },
+      // Butir 2: groupId + sessionId ikut agar UI bisa menautkan foto ke
+      // grupnya dan ke baris tahap di tabel riwayat dinamis.
+      select: { url: true, caption: true, groupId: true, sessionId: true },
     });
 
     return jsonResponse({
       ...serializeBatch(batch),
-      photos: photos.map((p) => ({ url: p.url, caption: p.caption, groupId: p.groupId })),
+      photos: photos.map((p) => ({ url: p.url, caption: p.caption, groupId: p.groupId, sessionId: p.sessionId })),
       sampleGroups: batch.sampleGroups.map((g) => ({
         ...serializeGroup(g),
         sessions: g.sessions.map(serializeSession),
@@ -52,11 +54,60 @@ export async function GET(
   }
 }
 
-export async function DELETE(
+/**
+ * Koreksi data pencatatan (form edit semua bagian di halaman detail):
+ * langkah Pengadaan + Kondisi & dokumentasi. Aturan persis seperti POST
+ * create (parseBatchFields), dikirim sebagai payload utuh oleh form edit.
+ * Batch terkunci ditolak 409. Foto tidak lewat sini (route /photos).
+ */
+export async function PATCH(
   request: Request,
   context: { params: Promise<{ batchId: string }> }
 ): Promise<Response> {
   const requestId = getRequestId(request);
+
+  try {
+    verifyCsrfAndOrigin(request);
+    await requireAuth(request, ['ADMIN']);
+    const { batchId } = await context.params;
+
+    const existing = await prisma.collectionBatch.findUnique({ where: { batchId } });
+    if (!existing) {
+      throw notFound(`Batch "${batchId}" not found`);
+    }
+    if (existing.lockedAt) {
+      throw conflict(`Batch "${batchId}" sudah terkunci dan tidak bisa diubah`);
+    }
+
+    const incoming = await request.json().catch(() => undefined);
+    // Form edit selalu mengirim field lengkap; untuk klien yang mengirim
+    // sebagian, nilai lama dipakai sebagai dasar supaya baris yang tidak
+    // dikirim tidak berubah tanpa sengaja. Alias lama (coolerTempMinC/MaxC) dinonaktifkan
+    // dengan mengosongkan kunci tersebut agar tidak menimpa nilai baru.
+    const base = serializeBatch(existing) as Record<string, unknown>;
+    delete base.id;
+    delete base.sizeGrade;
+    delete base.coolerTempMinC;
+    delete base.coolerTempMaxC;
+    delete base.lockedAt;
+    delete base.createdAt;
+    const merged = { ...base, ...(incoming as Record<string, unknown> | undefined) };
+
+    const fields = parseBatchFields(merged);
+    const updated = await prisma.collectionBatch.update({
+      where: { batchId },
+      data: fields,
+    });
+    return jsonResponse(serializeBatch(updated));
+  } catch (err) {
+    return errorResponse(err, requestId, request);
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ batchId: string }> }
+): Promise<Response> {  const requestId = getRequestId(request);
 
   try {
     verifyCsrfAndOrigin(request);

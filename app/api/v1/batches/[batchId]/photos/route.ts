@@ -22,6 +22,7 @@ export interface BatchPhotoItem {
   url: string;
   caption: string;
   groupId: string | null;
+  sessionId: string | null;
 }
 
 /** Daftar foto batch terurut (sumber tunggal kebenaran pengganti array photo_urls). */
@@ -29,9 +30,9 @@ async function listPhotos(batchId: string): Promise<BatchPhotoItem[]> {
   const rows = await prisma.batchPhoto.findMany({
     where: { batchId },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-    select: { url: true, caption: true, groupId: true },
+    select: { url: true, caption: true, groupId: true, sessionId: true },
   });
-  return rows.map((r) => ({ url: r.url, caption: r.caption, groupId: r.groupId }));
+  return rows.map((r) => ({ url: r.url, caption: r.caption, groupId: r.groupId, sessionId: r.sessionId }));
 }
 
 function assertOwnedUrl(url: unknown, prefix: string, batchId: string): string {
@@ -105,6 +106,21 @@ export async function POST(
       groupId = group.groupId;
     }
 
+    // Revisi tabel riwayat dinamis: foto per tahap menempel ke satu sesi
+    // lewat field "sessionId" opsional. Sesi wajib milik batch ini.
+    const sessionIdRaw = form.get('sessionId');
+    let sessionId: string | null = null;
+    if (typeof sessionIdRaw === 'string' && sessionIdRaw.trim() !== '') {
+      const session = await prisma.measurementSession.findFirst({
+        where: { sessionId: sessionIdRaw.trim(), batchId },
+        select: { sessionId: true },
+      });
+      if (!session) {
+        throw notFound(`Sesi "${sessionIdRaw.trim()}" tidak ada di batch "${batchId}"`);
+      }
+      sessionId = session.sessionId;
+    }
+
     // Offset penomoran file agar tidak tabrakan dengan foto yang sudah ada.
     const existing = await prisma.batchPhoto.count({ where: { batchId } });
     for (const file of files) {
@@ -133,6 +149,7 @@ export async function POST(
         caption: parsedCaptions[i],
         sortOrder: existing + i,
         groupId,
+        sessionId,
       });
     }
     await prisma.batchPhoto.createMany({ data: rows });
