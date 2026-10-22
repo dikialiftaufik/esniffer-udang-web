@@ -1,24 +1,42 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# E-Sniffer Web Dashboard
+
+Dashboard pencatatan & monitoring e-nose udang (Next.js App Router + PostgreSQL/Prisma + MQTT worker).
+Data chamber, sesi observasi batch udang, dan telemetri sensor terhubung lewat worker ingestion MQTT terpisah.
+
+**Hosting produksi:** <https://e-sniffer.stas-rg.com/> — deploy dari repo
+[`rvansss/esniffer-udang-web`](https://github.com/rvansss/esniffer-udang-web)
+(remote `upstream`). Kontribusi berjalan lewat fork
+[`dikialiftaufik/esniffer-udang-web`](https://github.com/dikialiftaufik/esniffer-udang-web)
+(remote `origin`) dan masuk produksi via pull request; panduan lengkap ada di
+`diki/Panduan_Sinkronisasi_GitHub_Fork.md`.
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+npm install
+
+# salin contoh env lalu sesuaikan DATABASE_URL / MQTT_URL / APP_BASE_URL
+cp .env.example .env
+
+# terapkan seluruh migrasi + generate prisma client
+npx prisma migrate deploy
+npx prisma generate
+
+# seed akun demo: admin@esniffer.local / admin123, operator@esniffer.local / viewer123
+npx prisma db seed
+
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Buka [http://localhost:3000](http://localhost:3000) — halaman utama pencatatan berada di `/batches`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Variabel | Keterangan |
+|---|---|
+| `DATABASE_URL` | PostgreSQL runtime (wajib). |
+| `MQTT_URL` / `MQTT_ADMIN_URL` | Broker untuk worker ingestion & setup mosquitto (lihat `diki/Panduan_Menghubungkan_Alat_ESP32_Kelokal.md`). |
+| `APP_BASE_URL` | Base URL publik. Wajib **https://** absolut di produksi (mis. `https://e-sniffer.stas-rg.com`) — dipakai allowlist Origin/CSRF (`lib/auth/guard.ts`) dan `metadataBase` SEO (`app/layout.tsx`). |
 
 ## Database
 
@@ -28,23 +46,20 @@ Prasyarat: **PostgreSQL 12 atau lebih baru**. Migrasi `20261019070000_source_typ
 # terapkan seluruh migrasi
 npx prisma migrate deploy
 
-# cek migrasi ↔ schema.prisma tidak melenceng (drift check)
+# cek migrasi dan schema.prisma tidak melenceng (drift check)
 npm run db:drift
 ```
 
 `npm run db:drift` memakai shadow database terpisah di server yang sama (`<DATABASE_URL>_shadow`, mis. `esniffer_dev_shadow`). Buat sekali dengan `createdb esniffer_dev_shadow`; override lewat env `SHADOW_DATABASE_URL` bila server melarang `CREATEDB`.
 
-## Learn More
+## Testing & kualitas
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run typecheck   # tsc --noEmit
+npx eslint .        # lint
+npm run test:unit   # tes unit (node:test)
+npm run test:db     # tes integrasi schema (dev DB)
+npm run test:api    # tes HTTP API route handler (dev DB, jalankan serial)
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Dokumen fitur, checklist verifikasi manual, dan rencana implementasi ada di folder `diki/`.

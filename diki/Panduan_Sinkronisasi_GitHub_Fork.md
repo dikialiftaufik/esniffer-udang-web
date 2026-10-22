@@ -112,6 +112,12 @@ Aturan yang dipakai di repo ini (lihat `git log`):
 - Minta review ke pemilik upstream / pembimbing.
 - Setelah di-merge ke `upstream/main`, otomatis masuk ke fork pada sinkronisasi berikutnya.
 
+> **Deployment produksi.** Web live di **<https://e-sniffer.stas-rg.com>** di-hosting/dideploy
+> dari repo **upstream** (`rvansss/esniffer-udang-web`). Artinya: perubahan fitur **tidak otomatis
+> tampil di hosting** sebelum PR-nya di-merge ke `upstream/main`. Env produksi `APP_BASE_URL`
+> harus tetap `https://e-sniffer.stas-rg.com` (allowlist Origin/CSRF) — lihat tabel
+> Environment di `README.md`.
+
 ### 3.4 Memperbarui upstream ke fork (bukan ke upstream)
 
 Kalau upstream sudah punya fitur yang Anda mau adaptasi (bukan-PR):
