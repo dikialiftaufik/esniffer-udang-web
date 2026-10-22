@@ -471,6 +471,21 @@ Lolos bila: suite hijau, tidak ada skenario gagal, dan 10 skenario tersisa terdo
 
 ---
 
+## Addendum: Konsolidasi edit & data tahap per sesi (Kamis, 22 Oktober 2026)
+
+**Thursday, 22 Oktober 2026**
+Kamu melakukan Pekerjaan Apa Hari Ini ?
+Merespons masukan pembimbing putaran 2 di halaman detail batch: menyatukan pengeditan jadi **satu tombol "Edit data"** yang membuka form utuh tiga bagian (Pengadaan, Kondisi & dokumentasi, Pengelompokan per grup) — tombol "Edit data grup" per kartu dihapus — dikirim via endpoint baru `PATCH /api/v1/batches/{id}` yang menumpuk koreksi di atas data lama memakai parser yang sama dengan POST (`parseBatchFields`), menghitung ulang `sizeGrade`, dan menegakkan ulang semua gate wizard; centang deviasi cold-chain otomatis bila durasi beli → tiba > 3 jam. Lalu memindahkan data observasi tahap (suhu & berat udang) ke level sesi: migrasi `shrimp_temp_c`/`shrimp_weight_g` dengan CHECK rentang di database, POST sesi menerimanya, endpoint `PATCH /api/v1/sessions/{id}` untuk koreksi (kosongkan eksplisit), foto per tahap menaut ke sesi (`batch_photos.session_id`), tabel riwayat per grup yang selalu tampil (Tahap | Timepoint | Suhu | Berat | Foto | Aksi: pensil koreksi, ikon ulang untuk data bocor, Cleaning 70% + Complete), modal pra-sesi berjudul "Tahap N" dengan penampil foto per tahap, dan penyelarasan label ("Suhu udang (°C)", "Berat total udang (g)"). Menyinkronkan tiga dokumen + logbook dan menambah 10 skenario test API.
+
+Uji hari ini:
+1. Test API baru `batch-session-edit.test.ts`: PATCH batch (merge, sizeGrade dihitung ulang, urutan waktu 422, viewer 403, terkunci 409), PATCH sesi (ubah/kosongkan/nonpositif/422), foto per sesi (taut benar; sesi asing 404).
+2. Suite penuh: typecheck ✓, eslint 0 pesan, unit 140/140, db 52/52, api 114/114.
+3. Uji browser (Playwright, batch `BT-20261021-01`): form edit utuh + dropdown jenis sumber, modal "Tahap 1/2" + label baru, baris tahap `5,5 °C` / `600 g` muncul seketika, pensil → `6,25 °C`, penampil foto + caption, Complete dengan Cleaning, viewport 360 px tergulir wajar.
+4. Checklist verifikasi manual kini 103 skenario — 91 otomatis, 0 gagal, 12 Blokir/manual.
+Lolos bila: suite hijau, alur edit-tahap end-to-end lolos di browser, dan dokumen (panduan, checklist, rencana, logbook) sesuai perilaku final.
+
+---
+
 ## Tugas studi pengganti hari sakit (hanya bila kampus mewajibkan terisi)
 
 > Enam hari kerja tercatat sakit: Jumat 18 September + Senin-Jumat 21-25 September
@@ -493,4 +508,4 @@ Lolos bila: suite hijau, tidak ada skenario gagal, dan 10 skenario tersisa terdo
 
 ---
 
-*Terakhir diperbarui: 23 Oktober 2026 (+ addendum perbaikan akhir revisi, 21 Oktober 2026) | Rentang logbook: 27 Agustus – 23 Oktober 2026 | Kode: `main` commit `6976d2e` (perbaikan kontras tombol) + `cf0b21d` (filter navbar debug)*
+*Terakhir diperbarui: 23 Oktober 2026 (+ addendum konsolidasi edit & data tahap per sesi, 22 Oktober 2026) | Rentang logbook: 27 Agustus — 23 Oktober 2026 | Kode: `main` commit `6976d2e` (perbaikan kontras tombol) + `cf0b21d` (filter navbar debug)*

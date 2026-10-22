@@ -36,14 +36,16 @@
 
 ## Butir 3. Form Edit per Section di Halaman Detail
 
+Nomor tetap; tombol lama per-grup sudah diganti: satu tombol **Edit data** membuka form utuh (lihat juga Butir 15).
+
 | # | Skenario Uji | Langkah | Hasil Diharapkan | Hasil | Catatan |
 |---|--------------|---------|------------------|-------|---------|
-| 3.1 | Tombol **Edit data grup** per kartu grup → form inline | 1. Buka detail batch<br>2. Klik **Edit data grup** pada kartu grup SR/SD | Form inline terbuka berisi: Suhu udang sebelum observasi (°C), Berat sampel sebelum observasi (g), Berat sampel sesudah observasi (g) | ✅ otomatis | browser detail 17/17 (form inline "Edit data grup") |
-| 3.2 | Edit suhu → Simpan → nilai update di detail & CSV metadata | 1. Ubah suhu (mis. 6.4 → 7.2)<br>2. Klik **Simpan**<br>3. Muat ulang halaman<br>4. Unduh **Metadata CSV** | Suhu terupdate di detail; CSV metadata kolom `lab_temp_c` mengikuti nilai baru | ✅ otomatis | browser detail 17/17 (nilai 6.5 tersimpan di server) |
-| 3.3 | Edit berat sesudah < berat sebelum → **peringatan**, tidak memblokir | 1. Set berat sebelum = 500, berat sesudah = 400<br>2. Simpan | Peringatan kuning (bukan error): "Berat sesudah (400 g) lebih kecil dari berat sebelum (500 g) — catat alasan bila memang penyusutan."; nilai tetap tersimpan | ✅ otomatis | browser detail 17/17 (peringatan, nilai tetap tersimpan) |
-| 3.4 | Batch **terkunci** → Edit ditolak 409 | 1. Kunci batch<br>2. Coba Edit grup | Error 409: "Batch sudah terkunci dan tidak bisa diubah" | ✅ otomatis | test api (409 batch terkunci) |
+| 3.1 | Kartu grup: **tidak ada tombol "Edit data grup"** | 1. Buka detail batch<br>2. Periksa kartu grup SR/SD | Tidak ada tombol per grup; hanya satu tombol **Edit data** di kartu DATA PENCATATAN | ✅ otomatis | akun demo; `Edit data grup` hilang dari DOM |
+| 3.2 | Blok grup di form Edit data: field grup | 1. Buka form Edit data utuh<br>2. Turun ke bagian **Pengelompokan** | Tiap grup menampilkan: Suhu udang (°C), Berat sampel sebelum observasi (g), Berat total udang (g), radio chamber/kulkas (grup dingin) — validasi `validateGroupFields` | ✅ otomatis | browser detail; nilai awal = nilai wizard |
+| 3.3 | Edit berat total < berat sebelum → **peringatan**, tidak memblokir | 1. Set berat sebelum = 500, berat total = 400<br>2. Simpan | Peringatan kuning (bukan error): "Berat … lebih kecil dari berat sampel — catat alasan bila memang penyusutan."; nilai tetap tersimpan | ✅ otomatis | peringatan `groupWeightWarning`, request tetap terkirim |
+| 3.4 | Batch **terkunci** → Edit ditolak 409 | 1. Kunci batch<br>2. Coba Edit data | Error 409: "Batch sudah terkunci dan tidak bisa diubah" | ✅ otomatis | test api (409 batch terkunci, PATCH batch & PATCH sesi) |
 | 3.5 | Body kosong (tanpa field) → 422 | 1. Kirim PATCH `/api/v1/groups/{id}` body `{}` | Error 422: "Body harus memuat minimal satu field..." | ✅ otomatis | test api (422 body kosong) |
-| 3.6 | Form edit grup: galat tampil **per-field** (bukan satu notifikasi umum) | 1. Buka form edit grup<br>2. Isi suhu 99 lalu Simpan | Field suhu diberi tanda merah + pesan "Harus -2 sampai 30 °C."; permintaan tidak terkirim ke server | ✅ otomatis | browser detail 17/17 (galat per-field, request tidak terkirim) |
+| 3.6 | Form Edit data: galat tampil **per-field** (bukan satu notifikasi umum) | 1. Isi suhu grup 99 lalu Simpan | Field diberi tanda merah + pesan "Harus -2 sampai 30 °C."; permintaan tidak terkirim ke server | ✅ otomatis | browser detail |
 
 ---
 
@@ -63,8 +65,8 @@
 |---|--------------|---------|------------------|-------|---------|
 | 5.1 | Wizard step Pengadaan: field **Tanggal & Jam Beli** & **Tanggal & Jam Tiba** terisi otomatis jam device | 1. Buka `/batches/new` (browser baru / incognito)<br>2. Periksa kedua input `datetime-local` | Nilai default = waktu sekarang (WIB) dari jam device; format `YYYY-MM-DDTHH:MM` | ✅ otomatis | browser 360px (default terisi, WIB) |
 | 5.2 | Ubah jam device (OS) → buka wizard baru → nilai ikut berubah | 1. Ganti jam sistem +1 jam<br>2. Refresh `/batches/new` | Input waktu bergeser +1 jam | ⛔ Blokir | perlu mengubah jam sistem operasi |
-| 5.3 | Isi jam beli di luar 06:00–08:00 WIB → klik **Lanjut** → tertahan + pesan merah | 1. Set jam beli `10:00`<br>2. Klik **Lanjut ke Kondisi & Dokumentasi** | Tombol tidak jalan; pesan error inline merah: "Harus pagi 06:00–08:00 WIB (Anda mengisi jam di luar jendela)." | ✅ otomatis | browser wizard 15/15 (gate tertahan + pesan inline) |
-| 5.4 | CSV Metadata ekspor: header **pecah 4 kolom** (bukan 2 kolom UTC) | 1. Buat batch lengkap → Unduh **Metadata CSV**<br>2. Buka di Excel/Notepad | Header: `procured_date`, `procured_time_wib`, `arrived_date`, `arrived_time_wib` (TIDAK ADA `procured_at_utc`, `arrived_at_utc`) | ✅ otomatis | test api CSV + test unit toWibParts |
+| 5.3 | Isi jam beli di luar 05:00–08:00 WIB → klik **Lanjut** → tertahan + pesan merah | 1. Set jam beli `09:00`<br>2. Klik **Lanjut ke Pengelompokan** | Tombol tidak jalan; pesan error inline merah: "Harus di antara 05:00–08:00 WIB (Anda mengisi jam di luar jendela)." | ✅ otomatis | browser wizard 15/15 (gate tertahan + pesan inline) |
+| 5.4 | CSV Metadata ekspor: header **pecah 6 kolom** (bukan 2 kolom UTC) | 1. Buat batch lengkap → Unduh **Metadata CSV**<br>2. Buka di Excel/Notepad | Header: `departed_date`, `departed_time_wib`, `procured_date`, `procured_time_wib`, `arrived_date`, `arrived_time_wib` (TIDAK ADA `procured_at_utc`, `arrived_at_utc`) | ✅ otomatis | test api CSV + test unit toWibParts |
 | 5.5 | Nilai CSV WIB = konversi UTC+7 dari DB (bukan copy mentah) | 1. Bandingkan nilai DB `procured_at_utc` vs CSV `procured_date` + `procured_time_wib` | `procured_time_wib` = UTC+7; tanggal konsisten (lewat tengah malam ditangani benar) | ✅ otomatis | test unit toWibParts + browser submit (07:00 WIB → 00:00Z) |
 
 ---
@@ -79,14 +81,25 @@
 
 ---
 
-## Butir 7. Cool Box: Suhu di Pasar & di Lab (Bukan Min/Max)
+## Butir 7. Cool Box: Suhu saat Berangkat, di Pasar & di Lab (Bukan Min/Max)
 
 | # | Skenario Uji | Langkah | Hasil Diharapkan | Hasil | Catatan |
 |---|--------------|---------|------------------|-------|---------|
-| 7.1 | Wizard step **Kondisi & Dokumentasi**: dua field terpisah | 1. Buka `/batches/new` → step Kondisi & Dokumentasi<br>2. Cari field cool box | Dua input: **"Suhu cool box saat di pasar (°C)"** & **"Suhu cool box saat di lab (°C)"** (bukan min/max) | ✅ otomatis | browser 360px (dua field terpisah) |
-| 7.2 | Validasi masing-masing 0–4 °C | 1. Isi pasar = 5, lab = 2 → Simpan<br>2. Isi pasar = 2, lab = 5 → Simpan | Kedua kali error: "Suhu cool box harus 0–4 °C" | ✅ otomatis | test unit batch-wizard (batas 0–4 °C) + browser |
+| 7.1 | Wizard step **Kondisi & Dokumentasi**: dua field terpisah | 1. Buka `/batches/new` → step Kondisi & Dokumentasi<br>2. Cari field cool box | Dua input: **"Suhu cool box saat di pasar (°C)"** & **"Suhu cool box saat di lab (°C)"** (bukan min/max); field ketiga **"Suhu cool box saat berangkat (°C)"** ada di step Pengadaan | ✅ otomatis | browser 360px (dua field terpisah) |
+| 7.2 | Validasi masing-masing −10…10 °C | 1. Isi pasar = 11, lab = 2 → Simpan<br>2. Isi berangkat = −11 → Simpan | Kedua kali error: "Harus −10 sampai 10 °C." | ✅ otomatis | test unit batch-wizard + test DB CHECK `collection_batches_cooler_range` |
 | 7.3 | Detail batch: tampil dua nilai terpisah | 1. Buka detail batch yang sudah dibuat | Section Pengadaan menampilkan: **"Suhu cool box saat di pasar (°C)"** & **"Suhu cool box saat di lab (°C)"** (dua nilai terpisah) | ✅ otomatis | browser submit 9/9 (pasar 2.5 / lab 3 tersimpan terpisah) |
-| 7.4 | CSV Metadata: header `cooler_temp_market_c`, `cooler_temp_lab_c` (TIDAK ADA min/max) | 1. Unduh Metadata CSV<br>2. Cek header | Header baru ada; `cooler_temp_min_c` & `cooler_temp_max_c` **hilang** | ✅ otomatis | test api CSV (header cooler_temp_market_c / _lab_c) |
+| 7.4 | CSV Metadata: header `cooler_temp_departure_c`, `cooler_temp_market_c`, `cooler_temp_lab_c` (TIDAK ADA min/max) | 1. Unduh Metadata CSV<br>2. Cek header | Header baru ada; `cooler_temp_min_c` & `cooler_temp_max_c` **hilang** | ✅ otomatis | test api CSV (header cooler_temp_departure_c / _market_c / _lab_c) |
+
+---
+
+## Butir 7b. Keberangkatan: Jam & Suhu Cool Box Sebelum ke Pasar
+
+| # | Skenario Uji | Langkah | Hasil Diharapkan | Hasil | Catatan |
+|---|--------------|---------|------------------|-------|---------|
+| 7b.1 | Wizard step **Pengadaan**: field baru | 1. Buka `/batches/new` | Ada **"Tanggal dan jam berangkat (WIB)"** (terisi otomatis) dan **"Suhu cool box saat berangkat (°C)"** | ✅ otomatis | browser wizard |
+| 7b.2 | Jam berangkat di luar 05:00–08:00 WIB ditahan | 1. Isi jam berangkat `04:30`<br>2. Klik **Lanjut ke Kondisi & Dokumentasi** | Tombol tertahan + pesan inline "Harus di antara 05:00–08:00 WIB…" | ✅ otomatis | test unit `validateStepA` |
+| 7b.3 | Beli harus setelah berangkat | 1. Isi berangkat `07:00`, beli `06:00`<br>2. Klik **Lanjut ke Pengelompokan** | Pesan di field jam beli: "Tanggal dan jam beli harus setelah tanggal dan jam berangkat." | ✅ otomatis | test unit `validateStepB` + api 422 |
+| 7b.4 | CSV Metadata memuat keberangkatan | 1. Unduh Metadata CSV batch baru | `departed_date`, `departed_time_wib` terisi; batch lama (tanpa keberangkatan) sel-nya kosong | ✅ otomatis | test api export (baris lama = sel kosong) |
 
 ---
 
@@ -145,8 +158,8 @@
 | # | Skenario Uji | Langkah | Hasil Diharapkan | Hasil | Catatan |
 |---|--------------|---------|------------------|-------|---------|
 | 12.1 | Indikator step: **"Langkah 1 dari 3" → "Langkah 2 dari 3" → "Langkah 3 dari 3"** | 1. Buka `/batches/new`<br>2. Navigasi ke step 2 & 3 | Indikator benar di header wizard | ✅ otomatis | browser wizard 15/15 |
-| 12.2 | **Step 1 (Pengadaan):** hanya logistik beli/tiba, jenis sumber, sumber teks | 1. Periksa field di step 1 | **TIDAK ADA** kondisi udang, ukuran, berat, cool box, foto dokumentasi | ✅ otomatis | browser wizard 15/15 |
-| 12.3 | **Step 2 (Kondisi & Dokumentasi):** kondisi awal, jumlah, ukuran, panjang, berat total, suhu sebelum observasi, 2x cool box, foto dokumentasi + caption | 1. Klik **Lanjut ke Kondisi & Dokumentasi**<br>2. Periksa field | Semua field kondisi + 2 cool box + area foto dokumentasi (caption wajib) ada di sini | ✅ otomatis | browser wizard 15/15 |
+| 12.2 | **Step 1 (Pengadaan):** keberangkatan + suhu cool box berangkat, jenis sumber (dropdown), sumber teks | 1. Periksa field di step 1 | Ada **"Tanggal dan jam berangkat"** & **"Suhu cool box saat berangkat"**; **TIDAK ADA** tanggal beli/tiba, kondisi udang, ukuran, berat, cool box pasar/lab, foto dokumentasi | ✅ otomatis | browser wizard 15/15 |
+| 12.3 | **Step 2 (Kondisi & Dokumentasi):** tanggal/jam beli & tiba, kondisi awal, jumlah, ukuran, panjang, berat total, suhu awal udang, 2x cool box, foto dokumentasi + caption | 1. Klik **Lanjut ke Kondisi & Dokumentasi**<br>2. Periksa field | Semua field waktu (beli/tiba) + kondisi + 2 cool box + area foto dokumentasi (caption wajib) ada di sini | ✅ otomatis | browser wizard 15/15 |
 | 12.4 | **Step 3 (Pengelompokan):** bagi SR/SD, radio chamber/non-chamber, foto per grup + caption | 1. Klik **Lanjut ke Pengelompokan** | Radio "Dalam chamber"/"Langsung di kulkas" per grup; area upload foto per grup | ✅ otomatis | browser wizard 15/15 |
 | 12.5 | Label **"Sumber pasar" → "Sumber"** (step 1) | 1. Periksa label di step Pengadaan | Label = "Sumber"; placeholder: "Nama lokasi pembelian, misal: Pasar Induk Kramat Jati, Supermarket X" | ✅ otomatis | browser wizard 15/15 (label "Sumber") |
 | 12.6 | Navigasi **maju-mundur** mempertahankan semua nilai | 1. Isi step 1 → Lanjut → isi step 2 → Lanjut → isi step 3<br>2. Klik **Kembali** ke step 2 → **Kembali** ke step 1 | Semua nilai tersimpan, tidak hilang | ✅ otomatis | browser wizard 15/15 (nilai bertahan saat mundur) |
@@ -183,7 +196,43 @@
 | 14.5 | **Detail batch**: kartu grup & sesi responsif 1 kolom | 1. Buka detail batch di 360 px | Tidak ada scroll horizontal; kartu menyesuaikan lebar | ✅ otomatis | browser 360px 14/14 |
 | 14.6 | **Dashboard Tabel Riwayat**: gulir horizontal terkendali (tidak pecah layout) | 1. Buka dashboard di 360 px<br>2. Scroll tabel | Tabel gulir horizontal di dalam container; sidebar/header tidak ikut geser | ✅ otomatis | browser 360px 14/14 (tabel 760 px di wadah 276 px) |
 | 14.7 | **Grafik**: tinggi penuh, tidak terpotong | 1. Buka chamber di 360 px | Grafik `min-h-[320px] sm:min-h-[220px]` terlihat utuh | ✅ otomatis | browser 360px 14/14 (tinggi 320 px) |
-| 14.8 | **Target sentuh minimal 44 px** pada tombol aksi utama | 1. Buka wizard & halaman detail di 360 px<br>2. Ukur tinggi tombol (DevTools → Computed) | Tombol aksi utama (chip langkah, Edit data grup, Unduh, Kunci, chip grafik, preset rentang) setinggi ≥ 44 px; tombol "×" hapus foto 32 px (≥ 24 px, WCAG 2.5.8) | ✅ otomatis | browser 360px 14/14 (tombol utama ≥ 44 px; "×" 32 px) |
+| 14.8 | **Target sentuh minimal 44 px** pada tombol aksi utama | 1. Buka wizard & halaman detail di 360 px<br>2. Ukur tinggi tombol (DevTools → Computed) | Tombol aksi utama (chip langkah, Edit data, Unduh, Kunci, chip grafik, preset rentang) setinggi ≥ 44 px; tombol "×" hapus foto 32 px (≥ 24 px, WCAG 2.5.8) | ✅ otomatis | browser 360px 14/14 (tombol utama ≥ 44 px; "×" 32 px) |
+
+---
+
+## Butir 15. Edit Data Utuh (Satu Tombol, Form 3 Bagian) — PATCH Batch
+
+| # | Skenario Uji | Langkah | Hasil Diharapkan | Hasil | Catatan |
+|---|--------------|---------|------------------|-------|---------|
+| 15.1 | Satu tombol **Edit data** untuk semua bagian | 1. Buka detail batch<br>2. Klik **Edit data** di kartu DATA PENCATATAN | Form utuh terbuka memuat tiga bagian: **Pengadaan**, **Kondisi & dokumentasi**, **Pengelompokan** (tiap grup) — terisi nilai batch saat ini | ✅ otomatis | browser detail (pengadaan/kondisi/pengelompokan + dropdown jenis sumber) |
+| 15.2 | Jenis sumber = **dropdown** di form edit | 1. Buka form Edit data<br>2. Periksa field jenis sumber | Dropdown Pasar/Supermarket/Tambak (bukan radio) | ✅ otomatis | browser detail |
+| 15.3 | Deviasi cold-chain **dicentang otomatis** bila durasi beli → tiba > 3 jam | 1. Ubah jam tiba sehingga selisih > 3 jam<br>2. Periksa bagian Kondisi | Checkbox "deviasi" otomatis tercentang dengan keterangan durasi | ✅ otomatis | helper `deviasiJamWib` |
+| 15.4 | Simpan koreksi → nilai berubah, nilai tak disentuh tetap | 1. Ubah sumber + jumlah udang<br>2. Klik **Simpan Perubahan**<br>3. Muat ulang halaman | Nilai baru tampil; suhu cool box, foto, dst. tetap dari data lama (merge di server) | ✅ otomatis | test api #7 (PATCH merge; `coolerTempDepartureC` tak berubah) |
+| 15.5 | `sizeGrade` dihitung ulang otomatis | 1. Ubah jumlah 10 ekor / berat 500 g<br>2. Simpan<br>3. Unduh Metadata CSV | `size_grade` = 20 (round(10/500×1000)); tidak bisa disuntik manual | ✅ otomatis | test api #7 |
+| 15.6 | Gate wizard ditegakkan ulang → 422 | 1. Ubah jam berangkat ke 08:30 (di luar 05:00–08:00) atau urutan mundur<br>2. Simpan | Error 422 "Harus di antara 05:00–08:00 WIB…"; nilai tidak tersimpan | ✅ otomatis | test api #8 |
+| 15.7 | VIEWER tidak bisa PATCH batch 403 | 1. Login viewer<br>2. PATCH `/api/v1/batches/{id}` | 403 "Role VIEWER is not permitted…" | ✅ otomatis | test api #9 |
+| 15.8 | BATCH terkunci → PATCH 409 (batch & sesi) | 1. Kunci batch<br>2. PATCH batch / PATCH sesi | Keduanya 409 | ✅ otomatis | test api #10 |
+| 15.9 | Batch lama tanpa beberapa field tetap bisa diedit | 1. Edit batch lama (data sebelum kolom tertentu ada)<br>2. Simpan tanpa mengosongkan field opsional | Disimpan; field lama tidak ikut terisi `null` | ⬜ manual | cek satu batch lama di staging |
+
+---
+
+## Butir 16. Data Tahap per Sesi: Tabel Riwayat, Modal "Tahap N", Foto per Tahap
+
+| # | Skenario Uji | Langkah | Hasil Diharapkan | Hasil | Catatan |
+|---|--------------|---------|------------------|-------|---------|
+| 16.1 | Tabel riwayat tahap **selalu tampil** (tanpa `<details>`) | 1. Buka detail batch<br>2. Periksa kartu grup | Tabel kolom **Tahap \| Timepoint \| Suhu \| Berat \| Foto \| Aksi** langsung terlihat; baris muncul begitu sesi dibuat | ✅ otomatis | browser detail; blok "Sesi berjalan" lama hilang |
+| 16.2 | Modal pra-sesi berjudul **"Tahap N"** | 1. Centang warmup → klik **Start Sesi** | Judul modal "Tahap 1" (H0), "Tahap 2" (H6), dst.; catatan "Isi data observasi dulu…" **tidak ada** | ✅ otomatis | browser detail (judul via `#pre-session-title`) |
+| 16.3 | Isi suhu & berat tahap → tersimpan per sesi | 1. Di modal Tahap 1 isi suhu 5,5 dan berat 600<br>2. Mulai Sesi<br>3. Periksa tabel | Baris Tahap 1 menampilkan `5,5 °C` dan `600 g` (2 desimal, koma Indonesia); DB `measurement_sessions.shrimp_temp_c`/`shrimp_weight_g` terisi | ✅ otomatis | browser detail + test api #1 |
+| 16.4 | Rentang ditolak: suhu di luar −2…30 → 422 | 1. POST/PATCH sesi dengan shrimpTempC 99 | 422 `VALIDATION_ERROR` | ✅ otomatis | test api #1 (#3 untuk berat 0) |
+| 16.5 | Pensil = koreksi data tahap | 1. Klik ikon pensil di baris Tahap 1<br>2. Ubah suhu 6,25 → Simpan Perubahan | Modal "Edit Tahap 1" terbuka terisi; setelah simpan tabel menampilkan `6,25 °C`; kosongkan field = mengosongkan nilai (`shrimpWeightG: null` → em dash) | ✅ otomatis | browser detail + test api #2 (null mengosongkan) |
+| 16.6 | Ikon ulang (tanda seru) = data bocor → reopen | 1. Lengkapi/marked sesi incomplete<br>2. Klik ikon ulang | Form ulang terbuka (alur `/reopen` tak berubah) | ⬜ manual | butuh sesi incomplete nyata |
+| 16.7 | Complete tahap: checkbox Cleaning 70% + tombol Complete **di baris tabel** | 1. Di baris tahap `open`, centang Cleaning<br>2. Klik Complete | Badge sesi jadi `complete`; jumlah baris lengkap ikut perhitungan lock | ✅ otomatis | browser detail |
+| 16.8 | Foto per tahap: unggah di modal → kolom Foto memuat badge jumlah | 1. Di modal Tahap 1 pilih foto + caption<br>2. Mulai Sesi | Badge "📷 1" di kolom Foto; klik membuka penampil; foto TIDAK duplikat di galeri grup; di DB `batch_photos.session_id` terisi | ✅ otomatis | browser detail + test api #5 (sesi asing → 404) |
+| 16.9 | Penampil foto tahap | 1. Klik tombol kamera di kolom Foto | Modal penampil: gambar + caption bernomor ("Kondisi H0 …"); tutup dengan tombol aria "Tutup penampil foto" | ✅ otomatis | browser detail (1 kolom HP / 2 kolom desktop) |
+| 16.10 | Catatan "Belum ada foto dipilih — pratinjau…" **hilang** | 1. Buka detail batch<br>2. Periksa kartu FOTO DOKUMENTASI | Teks tersebut tidak ada di DOM | ✅ otomatis | browser detail |
+| 16.11 | Label modal: Suhu udang (°C) / Berat total udang (g) / Foto dokumentasi | 1. Buka modal Tahap N | Ketiga label tampil tanpa "(opsional)"; teks lama "sesudah observasi" tidak ada | ✅ otomatis | browser detail |
+| 16.12 | CSV metadata **tidak berubah** (data tahap tidak diekspor) | 1. Unduh Metadata CSV batch dengan sesi bertahap | Kolom per-tahap tidak ada; tidak ada regresi kolom lain | ✅ otomatis | keputusan: ekspor CSV dibahas terpisah |
+| 16.13 | Mobile 360 px: tabel tahap tergulir horizontal, tombol aksi ≥ 44 px | 1. Buka detail batch di 360 px<br>2. Gulir tabel | Tabel dalam wadah `overflow-x-auto` (min-width 620 px); tombol pensil/ulang/kamera 42×42 px; layout lain 1 kolom | ✅ otomatis | browser 360px |
 
 ---
 
@@ -205,7 +254,9 @@
 | 12. Wizard 3 Langkah | 8 | 7 | 0 | 1 | 12.8 perlu dua langkah foto manual |
 | 13. Draf localStorage | 10 | 10 | 0 | 0 | seluruhnya terverifikasi otomatis |
 | 14. Mobile-First | 8 | 7 | 0 | 1 | 14.4 butuh HP asli |
-| **TOTAL** | **81** | **71** | **0** | **10** | 0 kegagalan; 10 scenario menunggu perangkat nyata / penilaian manual |
+| 15. Edit Data Utuh (PATCH batch) | 9 | 8 | 0 | 1 | 15.9 cek batch lama di staging |
+| 16. Data Tahap per Sesi | 13 | 12 | 0 | 1 | 16.6 sesi incomplete nyata |
+| **TOTAL** | **103** | **91** | **0** | **12** | 0 kegagalan; 12 scenario menunggu perangkat nyata / penilaian manual |
 
 ---
 
