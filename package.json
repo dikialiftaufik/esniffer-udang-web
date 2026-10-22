@@ -11,7 +11,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test --test-concurrency=1 test/*.test.ts test/db/*.test.ts test/e2e/*.test.ts test/api/*.test.ts",
-    "test:unit": "node --experimental-strip-types --test test/*.test.ts",
+    "test:unit": "node --experimental-strip-types --test test/*.test.ts test/unit/*.test.ts",
     "test:db": "node --experimental-strip-types --test --test-concurrency=1 test/db/*.test.ts",
     "test:e2e": "node --experimental-strip-types --test --test-concurrency=1 test/e2e/*.test.ts",
     "test:api": "node --experimental-strip-types --test --test-concurrency=1 test/api/*.test.ts",
