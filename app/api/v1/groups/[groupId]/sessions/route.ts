@@ -9,7 +9,7 @@ import {
   timepointToElapsedHours,
   isNextTimepoint,
 } from '../../../../../../shared/dataset.ts';
-import { serializeSession } from '../../../../../../lib/api/dataset.ts';
+import { serializeSession, parseBoundedNumber, parsePositiveNumber } from '../../../../../../lib/api/dataset.ts';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -92,6 +92,16 @@ export async function POST(
       deviceId = device.id;
     }
 
+    // Data observasi tahap ini (modal pra-sesi): suhu udang, berat total
+    // udang, dan foto (foto lewat route /photos dengan sessionId). Kolom
+    // grup tidak ditimpa lagi — tiap tahap menyimpan pengukurannya sendiri.
+    const shrimpTempC = body?.shrimpTempC === undefined || body?.shrimpTempC === null
+      ? null
+      : parseBoundedNumber(body.shrimpTempC, 'shrimpTempC', -2, 30);
+    const shrimpWeightG = body?.shrimpWeightG === undefined || body?.shrimpWeightG === null
+      ? null
+      : parsePositiveNumber(body.shrimpWeightG, 'shrimpWeightG', 2000);
+
     const suffix = group.storageCondition === 'COLD' ? 'SD' : 'SR';
     const session = await prisma.measurementSession.create({
       data: {
@@ -104,6 +114,8 @@ export async function POST(
         elapsedHours: timepointToElapsedHours(timepointCode),
         startedAtUtc,
         warmupDone: true,
+        shrimpTempC,
+        shrimpWeightG,
       },
     });
 

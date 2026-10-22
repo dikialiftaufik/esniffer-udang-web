@@ -301,6 +301,8 @@ type DbSession = {
   baselineMq4: { toNumber(): number } | null;
   warmupDone: boolean;
   cleaningDone: boolean;
+  shrimpTempC: { toNumber(): number } | null;
+  shrimpWeightG: { toNumber(): number } | null;
   status: string;
   lockedAt: Date | null;
   createdAt: Date;
@@ -318,6 +320,9 @@ export function serializeSession(s: DbSession) {
     elapsedHours: s.elapsedHours,
     startedAtUtc: s.startedAtUtc.toISOString(),
     endedAtUtc: iso(s.endedAtUtc),
+    // Data observasi per tahap (migrasi 20261022170000): baris lama = null.
+    shrimpTempC: dec(s.shrimpTempC),
+    shrimpWeightG: dec(s.shrimpWeightG),
     baselineMq137: dec(s.baselineMq137),
     baselineMq136: dec(s.baselineMq136),
     baselineMq4: dec(s.baselineMq4),
@@ -366,8 +371,9 @@ export function assertProcurementWindow(label: string, atUtc: Date): void {
 
 /**
  * Parsing & validasi lengkap payload data batch (data pencatatan langkah 1–2
- * wizard). POST /api/v1/batches memakai fungsi ini sebagai satu sumber
- * kebenaran, sehingga aturan gerbang tidak tersebar di route.
+ * wizard). POST create dan PATCH update di route /batches memakai fungsi ini
+ * atas dasar satu sumber kebenaran, jadi aturan gerbang tidak bisa berbeda
+ * antara "buat baru" dan "koreksi data".
  *
  * `body` boleh berisi field di luar daftar ini (id, sizeGrade, aliash lama
  * coolerTempMinC/MaxC, dsb.) — dibaca hanya field yang relevan; sizeGrade
