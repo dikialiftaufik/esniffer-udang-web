@@ -3,6 +3,9 @@
 # Upstream (repo kanonik) : https://github.com/rvansss/esniffer-udang-web
 # Fork     (repo kerja)    : https://github.com/dikialiftaufik/esniffer-udang-web
 #
+# Deployment produksi (https://e-sniffer.stas-rg.com/) berjalan dari upstream,
+# bukan dari fork ini. Fork hanya dipakai untuk pengembangan dan sinkronisasi.
+#
 # Mekanisme: branch `main` di fork di-rebase di atas `upstream/main`, lalu
 # dipush dengan --force-with-lease. Commit milik fork (termasuk file workflow
 # ini) tidak hilang, hanya ditulis ulang di atas upstream. Kalau rebase
@@ -54,7 +57,9 @@ jobs:
       - name: Rebase main fork di atas upstream/main
         run: |
           git checkout main
-          git rebase upstream/main
+          # Commit fork yang perubahannya sudah masuk upstream (mis. hasil squash
+          # merge PR) dibuang, bukan disisakan sebagai commit kosong/duplikat.
+          git rebase --empty=drop upstream/main
 
       - name: Push main ke fork
         run: |
