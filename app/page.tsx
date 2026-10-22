@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../components/auth/AuthProvider';
+import CreateChamberModal from '../components/chambers/CreateChamberModal';
 
 /**
  * Root landing page.
@@ -21,6 +22,7 @@ export default function RootPage() {
 
   const [fetchState, setFetchState] = useState<'pending' | 'no-chamber' | 'error'>('pending');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   useEffect(() => {
     // Wait for auth to initialise
@@ -100,15 +102,38 @@ export default function RootPage() {
         <div>
           <p className="text-white font-mono font-bold text-lg">Belum ada chamber aktif</p>
           <p className="text-white/50 font-mono text-sm mt-1">
-            Hubungi administrator untuk mengonfigurasi chamber pemantauan.
+            {user?.role === 'ADMIN'
+              ? 'Tambahkan chamber baru untuk memulai pemantauan sensor telemetri.'
+              : 'Hubungi administrator untuk mengonfigurasi chamber pemantauan.'}
           </p>
         </div>
-        <button
-          onClick={() => { setFetchState('pending'); setErrorMsg(null); }}
-          className="px-5 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 font-mono text-sm font-semibold transition-all"
-        >
-          Coba lagi
-        </button>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <button
+            onClick={() => { setFetchState('pending'); setErrorMsg(null); }}
+            className="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/20 text-white/80 hover:text-white font-mono text-sm font-semibold transition-all"
+          >
+            Coba lagi
+          </button>
+          {user?.role === 'ADMIN' && (
+            <button
+              onClick={() => setIsCreateModalOpen(true)}
+              className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-mono text-sm font-semibold transition-all shadow-lg shadow-cyan-950/40"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              <span>Tambah Chamber Pertama</span>
+            </button>
+          )}
+        </div>
+
+        <CreateChamberModal
+          isOpen={isCreateModalOpen}
+          onClose={() => setIsCreateModalOpen(false)}
+          onChamberCreated={() => {
+            setFetchState('pending');
+          }}
+        />
       </div>
     );
   }

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth, LogoutError } from '../auth/AuthProvider';
 import NotificationBell from './NotificationBell';
+import CreateChamberModal from '../chambers/CreateChamberModal';
 
 interface ChamberItem {
   id: string;
@@ -20,6 +21,7 @@ export default function Header() {
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const menuRef = React.useRef<HTMLDivElement>(null);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const itemRefs = React.useRef<Array<HTMLElement | null>>([]);
@@ -32,6 +34,7 @@ export default function Header() {
   }, []);
 
   const isLoginPage = pathname === '/login';
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Fetch chambers when user is authenticated and not on login page
   useEffect(() => {
@@ -56,11 +59,11 @@ export default function Header() {
       }
     };
 
-    fetchChambers();
+    void fetchChambers();
     return () => {
       isMounted = false;
     };
-  }, [user, isLoginPage, apiFetch]);
+  }, [user, isLoginPage, apiFetch, refreshKey]);
 
   // Extract current chamberId from path e.g. /chamber/CH-01 -> CH-01, or legacy /chamber/1 -> 1
   const pathParts = pathname?.split('/') || [];
@@ -160,7 +163,7 @@ export default function Header() {
 
       {/* Chamber Navigation (Hidden on Login) */}
       {!isLoginPage && (
-        <nav aria-label="Chamber Navigation" className="flex items-center p-1 rounded-xl bg-black/25 border border-white/10 backdrop-blur-md overflow-x-auto max-w-full">
+        <nav aria-label="Chamber Navigation" className="flex items-center p-1 rounded-xl bg-black/25 border border-white/10 backdrop-blur-md overflow-x-auto max-w-full gap-1">
           {chambers.length > 0 ? (
             chambers.map((c, idx) => {
               const active = isChamberActive(c, idx);
@@ -202,6 +205,21 @@ export default function Header() {
                 Chamber 2
               </Link>
             </div>
+          )}
+
+          {/* Tombol Tambah Chamber (hanya tampil untuk role ADMIN) */}
+          {user?.role === 'ADMIN' && (
+            <button
+              type="button"
+              onClick={() => setIsCreateModalOpen(true)}
+              title="Tambah Chamber Baru"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono text-xs md:text-sm font-semibold text-cyan-300 hover:text-white hover:bg-cyan-500/20 border border-dashed border-cyan-400/40 transition-all whitespace-nowrap cursor-pointer shrink-0 ml-1"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+              </svg>
+              <span>+ Chamber</span>
+            </button>
           )}
         </nav>
       )}
@@ -279,13 +297,34 @@ export default function Header() {
                 </div>
                 <div role="separator" className="mx-2 border-t border-white/10" />
                 <div className="pt-2 space-y-1">
+                  {user.role === 'ADMIN' && (
+                    <button
+                      role="menuitem"
+                      ref={(el) => {
+                        itemRefs.current[0] = el;
+                      }}
+                      onKeyDown={(e) => handleMenuKeyDown(e, 0)}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setIsCreateModalOpen(true);
+                      }}
+                      className="w-full flex items-center gap-3 px-2 py-2 rounded-xl text-[13px] font-mono font-semibold text-white hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:bg-white/10 text-left cursor-pointer"
+                    >
+                      <span className="w-8 h-8 shrink-0 rounded-lg bg-cyan-400/15 border border-cyan-300/20 flex items-center justify-center text-cyan-200">
+                        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                      </span>
+                      Tambah Chamber
+                    </button>
+                  )}
                   <Link
                     href="/batches"
                     role="menuitem"
                     ref={(el) => {
-                      itemRefs.current[0] = el;
+                      itemRefs.current[user.role === 'ADMIN' ? 1 : 0] = el;
                     }}
-                    onKeyDown={(e) => handleMenuKeyDown(e, 0)}
+                    onKeyDown={(e) => handleMenuKeyDown(e, user.role === 'ADMIN' ? 1 : 0)}
                     onClick={() => setMenuOpen(false)}
                     className="flex items-center gap-3 px-2 py-2 rounded-xl text-[13px] font-mono font-semibold text-white hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:bg-white/10"
                   >
@@ -304,9 +343,9 @@ export default function Header() {
                   <button
                     role="menuitem"
                     ref={(el) => {
-                      itemRefs.current[1] = el;
+                      itemRefs.current[user.role === 'ADMIN' ? 2 : 1] = el;
                     }}
-                    onKeyDown={(e) => handleMenuKeyDown(e, 1)}
+                    onKeyDown={(e) => handleMenuKeyDown(e, user.role === 'ADMIN' ? 2 : 1)}
                     onClick={() => {
                       setMenuOpen(false);
                       void handleLogout();
@@ -339,6 +378,15 @@ export default function Header() {
           </Link>
         ) : null}
       </div>
+
+      <CreateChamberModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onChamberCreated={() => {
+          setRefreshKey((k) => k + 1);
+        }}
+        existingChambers={chambers}
+      />
     </header>
   );
 }
