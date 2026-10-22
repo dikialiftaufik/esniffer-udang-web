@@ -5,8 +5,9 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '../../../components/auth/AuthProvider';
 import ConfirmDialog from '../../../components/ui/ConfirmDialog';
 import SuccessNotice, { useSuccessNotice } from '../../../components/ui/SuccessNotice';
-import { TIMEPOINT_SEQUENCES, MAX_PHOTO_BYTES, MAX_PHOTO_CAPTION_LENGTH } from '../../../shared/dataset.ts';
-import { validateGroupFields, groupWeightWarning } from '../../../lib/batch-wizard.ts';
+import { PencilIcon, RepeatIcon, CameraIcon } from '../../../components/ui/icons';
+import { TIMEPOINT_SEQUENCES, MAX_PHOTO_BYTES, MAX_PHOTO_CAPTION_LENGTH, wibDateTimeLocal } from '../../../shared/dataset.ts';
+import { validateStepA, validateStepB, validateGroupFields, groupWeightWarning, parseWibInput, wibInputToUtcIso, type WizardErrors } from '../../../lib/batch-wizard.ts';
 import type { ApiSessionStatus } from '../../../lib/api/dataset.ts';
 
 interface SessionItem {
@@ -18,6 +19,8 @@ interface SessionItem {
   cleaningDone: boolean;
   chamberId: string | null;
   deviceId: string | null;
+  shrimpTempC: number | null;
+  shrimpWeightG: number | null;
 }
 
 interface GroupItem {
@@ -46,10 +49,12 @@ interface PhotoItem {
   url: string;
   caption: string;
   groupId: string | null;
+  sessionId: string | null;
 }
 
 interface BatchDetail {
   batchId: string;
+  departedAtUtc: string | null;
   procuredAtUtc: string;
   arrivedAtUtc: string;
   marketSource: string;
@@ -60,6 +65,7 @@ interface BatchDetail {
   sizeGrade: number;
   initialCondition: string;
   initialTempC: number | null;
+  coolerTempDepartureC: number | null;
   coolerTempMarketC: number | null;
   coolerTempLabC: number | null;
   iceToShrimpRatio: string;
@@ -77,6 +83,9 @@ const btnPrimary =
   'px-4 py-2 min-h-[44px] rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-mono font-bold tracking-wider transition-all disabled:opacity-50';
 const btnGhost =
   'px-4 py-2 min-h-[44px] rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 text-xs font-mono font-bold transition-all disabled:opacity-50';
+/** Tombol ikon tidak teks: cukup target sentuh 42px, tetap ring fokus. */
+const btnAksi =
+  'w-[42px] h-[42px] rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-white/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70';
 
 /** Tanggal + jam WIB (UTC+7) — input wizard memakai datetime-local WIB. */
 const dtFmt = new Intl.DateTimeFormat('id-ID', {
@@ -92,6 +101,27 @@ const numFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
 
 const SOURCE_LABEL: Record<string, string> = { market: 'Pasar', supermarket: 'Supermarket', farm: 'Tambak' };
 const CONDITION_LABEL: Record<string, string> = { alive: 'Hidup saat dibeli', dead: 'Mati saat dibeli' };
+
+/** Draft form edit utuh (tipe dipakai updater kolom di bawah). */
+interface EditDraftStepA {
+  departedAt: string;
+  coolerDeparture: string;
+  marketSource: string;
+  sourceType: string;
+}
+interface EditDraftStepB {
+  procuredAt: string;
+  arrivedAt: string;
+  deviationAck: boolean;
+  initialCondition: string;
+  shrimpCount: string;
+  totalWeightG: string;
+  shrimpLengthCm: string;
+  initialTempC: string;
+  coolerMarket: string;
+  coolerLab: string;
+}
+type EditStepBField = Exclude<keyof EditDraftStepB, 'deviationAck'>;
 const VISUAL_LABEL: Record<string, string> = {
   normal: 'Normal',
   melanosis: 'Melanosis (bintik hitam)',
@@ -103,6 +133,59 @@ const EM_DASH = '—';
 
 const num = (v: number | null | undefined, unit = '') =>
   v === null || v === undefined ? EM_DASH : `${numFmt.format(v)}${unit}`;
+
+/** Kelas input form edit utuh: jelas merah bila galat, tenang bila benar. */
+const editCls = (hasError: boolean) =>
+  `w-full px-3 py-2 rounded-xl bg-black/25 border text-sm font-mono text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-400/60 ${
+    hasError ? 'border-rose-400/70' : 'border-white/10'
+  }`;
+
+/** Pasangan radio dua pilihan dipakai form edit utuh (kondisi awal, mode simpan). */
+function RadioPair({
+  legend,
+  name,
+  value,
+  options,
+  onChange,
+}: {
+  legend: string;
+  name: string;
+  value: string;
+  options: ReadonlyArray<readonly [string, string]>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <fieldset className="space-y-1">
+      <legend className="text-[11px] font-mono font-semibold text-white/80">{legend}</legend>
+      <div className="flex flex-wrap gap-3">
+        {options.map(([optValue, label]) => (
+          <label key={optValue} className="flex items-center gap-1.5 text-[11px] font-mono text-white/80">
+            <input
+              type="radio"
+              name={name}
+              checked={value === optValue}
+              onChange={() => onChange(optValue)}
+              className="accent-cyan-400"
+            />
+            {label}
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+/** Durasi (jam) beli→tiba dari pasangan input datetime-local WIB form edit.
+ * 0 = belum sah (biar checkbox deviasi tidak muncul saat tanggal kosong). */
+function deviasiJamWib(procured: string, arrived: string): number {
+  const a = parseWibInput(arrived);
+  const p = parseWibInput(procured);
+  if (!a.date || !p.date) return 0;
+  return (a.date.getTime() - p.date.getTime()) / 3_600_000;
+}
+
+/** Tabel riwayat boleh 2 desimal (sensor suhu 0,25 langkah). */
+const tabelNumFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 2 });
 
 /** Durasi beli→tiba: menit bila <1 jam, jam berpecahan desimal bila ≥1 jam. */
 const durationText = (procuredIso: string, arrivedIso: string) => {
@@ -157,27 +240,54 @@ export default function BatchDetailPage() {
   const [savingCaption, setSavingCaption] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [confirmPhoto, setConfirmPhoto] = useState<{ message: string; photoUrl: string } | null>(null);
-  // Butir 3: edit parsial data grup di halaman detail (PATCH /groups/[id]).
-  const [editGroupId, setEditGroupId] = useState<string | null>(null);
-  const [groupDraft, setGroupDraft] = useState<{
-    labTempC: string;
-    labWeightBeforeG: string;
-    labWeightAfterG: string;
-    coldStorageMode: 'chamber' | 'plain_fridge';
+  // Form edit semua bagian (ikon pensil): satu tombol, pengadaan + kondisi &
+  // dokumentasi + pengelompokan dalam satu form.
+  const [editOpen, setEditOpen] = useState(false);
+  const [editErrors, setEditErrors] = useState<{
+    stepA: WizardErrors;
+    stepB: WizardErrors;
+    groups: Record<string, WizardErrors>;
   } | null>(null);
-  const [groupErrors, setGroupErrors] = useState<Record<string, string>>({});
-  const [savingGroup, setSavingGroup] = useState(false);
+  const [editDraft, setEditDraft] = useState<{
+    stepA: { departedAt: string; coolerDeparture: string; marketSource: string; sourceType: string };
+    stepB: {
+      procuredAt: string;
+      arrivedAt: string;
+      deviationAck: boolean;
+      initialCondition: string;
+      shrimpCount: string;
+      totalWeightG: string;
+      shrimpLengthCm: string;
+      initialTempC: string;
+      coolerMarket: string;
+      coolerLab: string;
+    };
+    groups: Record<string, {
+      labTempC: string;
+      labWeightBeforeG: string;
+      labWeightAfterG: string;
+      coldStorageMode: string;
+    }>;
+  } | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
   // Modal form pra-sesi: input suhu berat foto sebelum start sesi.
-  const [preSessionModal, setPreSessionModal] = useState<{
+  const [sessionModal, setSessionModal] = useState<{
+    mode: 'create' | 'edit';
     groupId: string;
+    sessionId?: string;
     timepointCode: string;
-    labTempC: string;
-    labWeightAfterG: string;
+    shrimpTempC: string;
+    shrimpWeightG: string;
     photos: File[];
     photoPreviews: string[];
     photoCaptions: string[];
     err: string | null;
     busy: boolean;
+  } | null>(null);
+  // Penampil foto tahap: gambar + caption per sesi (tabel riwayat).
+  const [photoViewer, setPhotoViewer] = useState<{
+    title: string;
+    items: Array<{ url: string; caption: string; index: number }>;
   } | null>(null);
   const { message: notice, notify, dismiss } = useSuccessNotice();
 
@@ -327,12 +437,13 @@ export default function BatchDetailPage() {
       setError('Nyalakan sensor 30 menit dulu (centang warmup) sebelum Start sesi');
       return;
     }
-    // Modal form pra-sesi: isi suhu/berat/foto dulu, sesi dibuat setelah submit.
-    setPreSessionModal({
+    // Modal form tahap baru: isi suhu/berat/foto dulu, sesi dibuat setelah submit.
+    setSessionModal({
+      mode: 'create',
       groupId: g.groupId,
       timepointCode,
-      labTempC: '',
-      labWeightAfterG: '',
+      shrimpTempC: '',
+      shrimpWeightG: '',
       photos: [],
       photoPreviews: [],
       photoCaptions: [],
@@ -341,14 +452,48 @@ export default function BatchDetailPage() {
     });
   };
 
-  // Handler submit modal pra-sesi: simpan data grup + foto, lalu buat sesi.
-  const handlePreSessionSubmit = async () => {
-    if (!preSessionModal) return;
-    const { groupId, timepointCode, labTempC, labWeightAfterG, photos, photoCaptions } = preSessionModal;
+  const openSessionEdit = (g: GroupItem, s: SessionItem) => {
+      // Ikon pensil di tabel riwayat: koreksi data observasi satu tahap.
+      // Input type=number memakai titik desimal, jadi prefill tanpa konversi.
+      setSessionModal({
+        mode: 'edit',
+        groupId: g.groupId,
+        sessionId: s.sessionId,
+        timepointCode: s.timepointCode,
+        shrimpTempC: s.shrimpTempC === null ? '' : String(s.shrimpTempC),
+        shrimpWeightG: s.shrimpWeightG === null ? '' : String(s.shrimpWeightG),
+      photos: [],
+      photoPreviews: [],
+      photoCaptions: [],
+      err: null,
+      busy: false,
+    });
+  };
+
+  /** Nomor tahap = posisi timepoint di jadwal grup +1 (H0→1, H6 SR→2, D1 SD→2). */
+  const tahapOf = (g: GroupItem, timepointCode: string): number => {
+    const seq = g.storageCondition === 'cold' ? SD_TIMEPOINTS : SR_TIMEPOINTS;
+    const i = seq.indexOf(timepointCode);
+    return i < 0 ? 0 : i + 1;
+  };
+
+  // Handler submit modal tahap: simpan suhu/berat (+foto) lalu buat/tandai sesi.
+  const handleSessionModalSubmit = async () => {
+    if (!sessionModal) return;
+    const {
+      mode,
+      groupId,
+      sessionId,
+      timepointCode,
+      shrimpTempC,
+      shrimpWeightG,
+      photos,
+      photoCaptions,
+    } = sessionModal;
     const fail = (msg: string) =>
-      setPreSessionModal((m) => (m ? { ...m, err: msg, busy: false } : null));
-    const tempOk = labTempC.trim() === '' || Number.isFinite(Number(labTempC));
-    const weightOk = labWeightAfterG.trim() === '' || Number.isFinite(Number(labWeightAfterG));
+      setSessionModal((m) => (m ? { ...m, err: msg, busy: false } : null));
+    const tempOk = shrimpTempC.trim() === '' || Number.isFinite(Number(shrimpTempC));
+    const weightOk = shrimpWeightG.trim() === '' || Number.isFinite(Number(shrimpWeightG));
     if (!tempOk || !weightOk) {
       fail('Suhu dan berat harus angka yang sah (atau dikosongkan).');
       return;
@@ -360,49 +505,61 @@ export default function BatchDetailPage() {
         return;
       }
     }
-    setPreSessionModal((m) => (m ? { ...m, busy: true, err: null } : null));
+    setSessionModal((m) => (m ? { ...m, busy: true, err: null } : null));
     try {
-      // 1. Simpan suhu/berat ke grup (PATCH, bukan POST).
-      if (labTempC.trim() !== '' || labWeightAfterG.trim() !== '') {
-        const payload: Record<string, unknown> = {};
-        if (labTempC.trim() !== '') payload.labTempC = Number(labTempC);
-        if (labWeightAfterG.trim() !== '') payload.labWeightAfterG = Number(labWeightAfterG);
-        const res = await apiFetch(`/api/v1/groups/${encodeURIComponent(groupId)}`, {
+      // 1. Suhu/berat: mode edit kirim semua (pencil koreksi, kosong = null);
+      // mode create hanya kirim yang diisi lalu ke POST sesi.
+      const shrimpFields: Record<string, unknown> = {};
+      if (shrimpTempC.trim() !== '') shrimpFields.shrimpTempC = Number(shrimpTempC);
+      if (shrimpWeightG.trim() !== '') shrimpFields.shrimpWeightG = Number(shrimpWeightG);
+
+      let createdSessionId: string | undefined;
+      if (mode === 'edit') {
+        const res = await apiFetch(`/api/v1/sessions/${encodeURIComponent(sessionId ?? '')}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            shrimpTempC: shrimpTempC.trim() === '' ? null : Number(shrimpTempC),
+            shrimpWeightG: shrimpWeightG.trim() === '' ? null : Number(shrimpWeightG),
+          }),
         });
         const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.error?.message || `Gagal menyimpan data grup (kode ${res.status}).`);
+        if (!res.ok) throw new Error(body.error?.message || `Gagal menyimpan data tahap (kode ${res.status}).`);
+      } else {
+        // Grup "langsung di kulkas" (butir 1) tidak pernah ditautkan ke chamber.
+        const targetGroup = batch?.sampleGroups.find((grp) => grp.groupId === groupId);
+        const chamberId =
+          targetGroup?.coldStorageMode === 'plain_fridge' ? null : chSel[groupId] || null;
+        const created = await callJson(`/api/v1/groups/${encodeURIComponent(groupId)}/sessions`, {
+          timepointCode,
+          warmupDone: true,
+          chamberId,
+          ...shrimpFields,
+        }) as { sessionId?: string };
+        createdSessionId = created?.sessionId;
       }
-      // 2. Upload foto dokumentasi terpasang ke grup ini (caption wajib).
+
+      // 2. Foto tahap terangkai ke sesi ini (caption wajib).
       if (photos.length > 0) {
-        const form = new FormData();
-        for (const f of photos) form.append('photos', f);
-        form.append('captions', JSON.stringify(photoCaptions));
-        form.append('groupId', groupId);
-        const res = await apiFetch(`/api/v1/batches/${encodeURIComponent(batchId)}/photos`, {
-          method: 'POST',
-          body: form,
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.error?.message || `Gagal mengunggah foto (kode ${res.status}).`);
+        const targetSessionId = mode === 'edit' ? sessionId : createdSessionId;
+        if (targetSessionId) {
+          const form = new FormData();
+          for (const f of photos) form.append('photos', f);
+          form.append('captions', JSON.stringify(photoCaptions));
+          form.append('sessionId', targetSessionId);
+          const res = await apiFetch(`/api/v1/batches/${encodeURIComponent(batchId)}/photos`, {
+            method: 'POST',
+            body: form,
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.error?.message || `Gagal mengunggah foto (kode ${res.status}).`);
+        }
       }
-      // 3. Baru saat ini sesi dibuat.
-      // Grup "langsung di kulkas" (butir 1) tidak pernah ditautkan ke chamber.
-      const targetGroup = batch?.sampleGroups.find((g) => g.groupId === groupId);
-      const chamberId =
-        targetGroup?.coldStorageMode === 'plain_fridge' ? null : chSel[groupId] || null;
-      await callJson(`/api/v1/groups/${encodeURIComponent(groupId)}/sessions`, {
-        timepointCode,
-        warmupDone: true,
-        chamberId,
-      });
-      setPreSessionModal(null);
-      notify(`Sesi ${timepointCode} berhasil dimulai.`);
+      setSessionModal(null);
+      notify(mode === 'edit' ? `Data tahap ${timepointCode} berhasil diperbarui.` : `Sesi ${timepointCode} berhasil dimulai.`);
       refresh();
     } catch (err) {
-      setPreSessionModal((m) => (m ? { ...m, err: err instanceof Error ? err.message : 'Gagal memulai sesi', busy: false } : null));
+      setSessionModal((m) => (m ? { ...m, err: err instanceof Error ? err.message : 'Gagal menyimpan', busy: false } : null));
     }
   };
 
@@ -561,75 +718,179 @@ export default function BatchDetailPage() {
     }
   };
 
-  /** Butir 3: buka form edit data grup di halaman detail. */
-  const startGroupEdit = (g: GroupItem) => {
-    setEditGroupId(g.groupId);
-    setGroupErrors({});
-    setGroupDraft({
-      labTempC: g.labTempC === null ? '' : String(g.labTempC),
-      labWeightBeforeG: g.labWeightBeforeG === null ? '' : String(g.labWeightBeforeG),
-      labWeightAfterG: g.labWeightAfterG === null ? '' : String(g.labWeightAfterG),
-      coldStorageMode: g.coldStorageMode === 'plain_fridge' ? 'plain_fridge' : 'chamber',
+  /** Buka form edit semua bagian (pengadaan, kondisi & dokumentasi, pengelompokan). */
+  const startEdit = () => {
+    if (!batch) return;
+    const wib = (iso: string | null) => (iso ? wibDateTimeLocal(new Date(iso)) : '');
+    setEditErrors(null);
+    setEditDraft({
+      stepA: {
+        departedAt: wib(batch.departedAtUtc),
+        coolerDeparture: batch.coolerTempDepartureC === null ? '' : String(batch.coolerTempDepartureC),
+        marketSource: batch.marketSource,
+        sourceType: batch.sourceType,
+      },
+      stepB: {
+        procuredAt: wib(batch.procuredAtUtc),
+        arrivedAt: wib(batch.arrivedAtUtc),
+        deviationAck: false,
+        initialCondition: batch.initialCondition,
+        shrimpCount: String(batch.shrimpCount),
+        totalWeightG: batch.totalWeightG === null ? '' : String(batch.totalWeightG),
+        shrimpLengthCm: batch.shrimpLengthCm === null ? '' : String(batch.shrimpLengthCm),
+        initialTempC: batch.initialTempC === null ? '' : String(batch.initialTempC),
+        coolerMarket: batch.coolerTempMarketC === null ? '' : String(batch.coolerTempMarketC),
+        coolerLab: batch.coolerTempLabC === null ? '' : String(batch.coolerTempLabC),
+      },
+      groups: Object.fromEntries(
+        batch.sampleGroups.map((g) => [
+          g.groupId,
+          {
+            labTempC: g.labTempC === null ? '' : String(g.labTempC),
+            labWeightBeforeG: g.labWeightBeforeG === null ? '' : String(g.labWeightBeforeG),
+            labWeightAfterG: g.labWeightAfterG === null ? '' : String(g.labWeightAfterG),
+            coldStorageMode: g.coldStorageMode === 'plain_fridge' ? 'plain_fridge' : 'chamber',
+          },
+        ])
+      ),
+    });
+    setEditOpen(true);
+  };
+
+  const closeEdit = () => {
+    setEditOpen(false);
+    setEditDraft(null);
+    setEditErrors(null);
+  };
+
+  /** Update satu kolom langkah Pengadaan di form edit utuh + bersihkan galatnya. */
+  const updateStepA = (key: keyof EditDraftStepA, value: string) => {
+    setEditDraft((d) => (d ? { ...d, stepA: { ...d.stepA, [key]: value } } : d));
+    setEditErrors((prev) => {
+      if (!prev?.stepA[key]) return prev;
+      const next = { ...prev, stepA: { ...prev.stepA } };
+      delete next.stepA[key];
+      return next;
     });
   };
 
-  /** Peringatan berat untuk form edit grup yang sedang dibuka. */
-  const draftWeightWarning = (g: GroupItem): string | null => {
-    if (!groupDraft || editGroupId !== g.groupId) {
-      return null;
-    }
-    return groupWeightWarning({
-      labTempC: groupDraft.labTempC,
-      visualCheck: g.visualCheck,
-      labWeightBeforeG: groupDraft.labWeightBeforeG,
-      labWeightAfterG: groupDraft.labWeightAfterG,
-      sampleShrimpCount: String(g.sampleShrimpCount),
+  /** Update satu kolom langkah Kondisi & dokumentasi (kecuali checkbox deviasi). */
+  const updateStepB = (key: EditStepBField, value: string) => {
+    setEditDraft((d) => (d ? { ...d, stepB: { ...d.stepB, [key]: value } } : d));
+    setEditErrors((prev) => {
+      if (!prev?.stepB[key]) return prev;
+      const next = { ...prev, stepB: { ...prev.stepB } };
+      delete next.stepB[key];
+      return next;
     });
   };
 
-  const saveGroupEdit = async (g: GroupItem) => {
-    if (!groupDraft) {
-      return;
-    }
-    // Aturan kolom grup: sumber tunggal sama dengan wizard (butir 3).
-    const errs = validateGroupFields({
-      labTempC: groupDraft.labTempC,
-      visualCheck: g.visualCheck,
-      labWeightBeforeG: groupDraft.labWeightBeforeG,
-      labWeightAfterG: groupDraft.labWeightAfterG,
-      sampleShrimpCount: String(g.sampleShrimpCount),
+  /** Update kolom satu grup (pengelompokan) di form edit utuh. */
+  const updateGroup = (groupId: string, key: string, value: string) => {
+    setEditDraft((d) =>
+      d ? { ...d, groups: { ...d.groups, [groupId]: { ...d.groups[groupId], [key]: value } } } : d
+    );
+    setEditErrors((prev) => {
+      if (!prev?.groups[groupId]?.[key]) return prev;
+      return {
+        ...prev,
+        groups: {
+          ...prev.groups,
+          [groupId]: (() => {
+            const next = { ...prev.groups[groupId] };
+            delete next[key];
+            return next;
+          })(),
+        },
+      };
     });
-    if (Object.keys(errs).length > 0) {
-      setGroupErrors(errs);
+  };
+
+  /** Sunting form edit utuh: PATCH batch lalu PATCH tiap grup yang diubah. */  const saveEdit = async () => {
+    if (!editDraft || !batch) return;
+    const errs = {
+      stepA: validateStepA(editDraft.stepA),
+      stepB: validateStepB({ ...editDraft.stepB, departedAt: editDraft.stepA.departedAt }),
+      groups: {} as Record<string, WizardErrors>,
+    };
+    for (const g of batch.sampleGroups) {
+      const draft = editDraft.groups[g.groupId];
+      if (!draft) continue;
+      errs.groups[g.groupId] = validateGroupFields({
+        labTempC: draft.labTempC,
+        visualCheck: g.visualCheck,
+        labWeightBeforeG: draft.labWeightBeforeG,
+        labWeightAfterG: draft.labWeightAfterG,
+        sampleShrimpCount: String(g.sampleShrimpCount),
+      });
+    }
+    if (
+      Object.keys(errs.stepA).length > 0 ||
+      Object.keys(errs.stepB).length > 0 ||
+      Object.values(errs.groups).some((e) => Object.keys(e).length > 0)
+    ) {
+      setEditErrors(errs);
       notify('Periksa lagi kolom yang ditandai.');
       return;
     }
-    setGroupErrors({});
-    setSavingGroup(true);
+    setEditErrors(null);
+    setSavingEdit(true);
     try {
-      const res = await apiFetch(`/api/v1/groups/${encodeURIComponent(g.groupId)}`, {
+      // Deviasi cold-chain dicatat otomatis bila durasi beli→tiba di form >3 jam.
+      const durasiJam =
+        (Date.parse(wibInputToUtcIso(editDraft.stepB.arrivedAt)) -
+          Date.parse(wibInputToUtcIso(editDraft.stepB.procuredAt))) / 3_600_000;
+      const batchRes = await apiFetch(`/api/v1/batches/${encodeURIComponent(batch.batchId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          labTempC: Number(groupDraft.labTempC),
-          labWeightBeforeG: Number(groupDraft.labWeightBeforeG),
-          labWeightAfterG: Number(groupDraft.labWeightAfterG),
-          // Butir 1: mode penyimpanan hanya relevan untuk grup dingin.
-          ...(g.storageCondition === 'cold' ? { coldStorageMode: groupDraft.coldStorageMode } : {}),
+          departedAtUtc: wibInputToUtcIso(editDraft.stepA.departedAt),
+          marketSource: editDraft.stepA.marketSource.trim(),
+          sourceType: editDraft.stepA.sourceType,
+          coolerTempDepartureC: Number(editDraft.stepA.coolerDeparture),
+          procuredAtUtc: wibInputToUtcIso(editDraft.stepB.procuredAt),
+          arrivedAtUtc: wibInputToUtcIso(editDraft.stepB.arrivedAt),
+          deviationAcknowledged: durasiJam > 3 ? true : undefined,
+          initialCondition: editDraft.stepB.initialCondition,
+          shrimpCount: Number(editDraft.stepB.shrimpCount),
+          totalWeightG: Number(editDraft.stepB.totalWeightG),
+          shrimpLengthCm: Number(editDraft.stepB.shrimpLengthCm),
+          initialTempC: Number(editDraft.stepB.initialTempC),
+          coolerTempMarketC: Number(editDraft.stepB.coolerMarket),
+          coolerTempLabC: Number(editDraft.stepB.coolerLab),
         }),
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(body.error?.message || `Gagal menyimpan grup (kode ${res.status}).`);
+      const batchBody = await batchRes.json().catch(() => ({}));
+      if (!batchRes.ok) {
+        throw new Error(batchBody.error?.message || `Gagal menyimpan data batch (kode ${batchRes.status}).`);
       }
-      setEditGroupId(null);
-      setGroupDraft(null);
-      notify('Data grup berhasil diperbarui.');
+      for (const g of batch.sampleGroups) {
+        const draft = editDraft.groups[g.groupId];
+        if (!draft) continue;
+        const res = await apiFetch(`/api/v1/groups/${encodeURIComponent(g.groupId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            labTempC: Number(draft.labTempC),
+            labWeightBeforeG: Number(draft.labWeightBeforeG),
+            labWeightAfterG: Number(draft.labWeightAfterG),
+            ...(g.storageCondition === 'cold'
+              ? { coldStorageMode: draft.coldStorageMode }
+              : {}),
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(body.error?.message || `Gagal menyimpan grup ${g.groupId} (kode ${res.status}).`);
+        }
+      }
+      closeEdit();
+      notify('Data batch berhasil diperbarui.');
       refresh();
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Gagal menyimpan grup.');
+      notify(err instanceof Error ? err.message : 'Gagal menyimpan data batch.');
     } finally {
-      setSavingGroup(false);
+      setSavingEdit(false);
     }
   };
 
@@ -730,207 +991,480 @@ export default function BatchDetailPage() {
       <div className={cardCls}>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h3 className="text-sm font-mono font-bold text-white tracking-widest">DATA PENCATATAN</h3>
-          <p className="text-[11px] font-mono text-white/45">
-            Unduh metadata bersifat opsional — data form tampil di sini.
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="text-[11px] font-mono text-white/45">
+              Unduh metadata bersifat opsional — data form tampil di sini.
+            </p>
+            {isAdmin && !locked && !editOpen && (
+              <button type="button" onClick={startEdit} className={btnGhost}>
+                <PencilIcon className="w-3.5 h-3.5" aria-hidden="true" />
+                Edit data
+              </button>
+            )}
+          </div>
         </div>
 
-        <div>
-          <p className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
-            Pengadaan
-          </p>
-          <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3">
-            <DataPair label="Tanggal dan jam beli (WIB)" value={dtFmt.format(new Date(batch.procuredAtUtc))} />
-            <DataPair label="Tanggal dan jam tiba di lab (WIB)" value={dtFmt.format(new Date(batch.arrivedAtUtc))} />
-            <DataPair label="Durasi beli ke tiba" value={durationText(batch.procuredAtUtc, batch.arrivedAtUtc)} />
-            <DataPair label="Sumber" value={batch.marketSource} />
-            <DataPair label="Jenis sumber" value={SOURCE_LABEL[batch.sourceType] ?? batch.sourceType} />
-            <DataPair label="Kondisi awal udang" value={CONDITION_LABEL[batch.initialCondition] ?? batch.initialCondition} />
-            <DataPair label="Jumlah total udang (ekor)" value={num(batch.shrimpCount)} />
-            <DataPair label="Berat total udang (g)" value={num(batch.totalWeightG, ' g')} />
-            <DataPair label="Panjang udang (cm)" value={num(batch.shrimpLengthCm, ' cm')} />
-            <DataPair label="Ukuran (ekor/kg)" value={num(batch.sizeGrade)} />
-            <DataPair label="Suhu awal udang (°C)" value={num(batch.initialTempC, ' °C')} />
-            <DataPair label="Suhu cool box saat di pasar (°C)" value={num(batch.coolerTempMarketC, ' °C')} />
-            <DataPair label="Suhu cool box saat di lab (°C)" value={num(batch.coolerTempLabC, ' °C')} />
-          </dl>
-        </div>
+        {editOpen && editDraft && (
+          <form
+            noValidate
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveEdit();
+            }}
+            className="rounded-2xl border border-emerald-400/25 bg-black/20 p-4 space-y-5"
+          >
+            <p className="text-[11px] font-mono text-white/55">
+              Aturan sama dengan wizard: waktu WIB 05:00–08:00, suhu -2..30 °C, cool box -10..10 °C, berat &gt; 0 g.
+            </p>
 
-        <div>
-          <p className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
-            Pengelompokan
-          </p>
-          <div className="space-y-4">
-            {batch.sampleGroups.map((g) => (
-              <div
-                key={g.groupId}
-                className={`pl-3 border-l-2 ${
-                  g.storageCondition === 'cold' ? 'border-cyan-400/60' : 'border-amber-300/60'
-                }`}
-              >
-                <p className="text-xs font-mono font-bold text-white">
-                  {g.groupId} •{' '}
-                  {g.storageCondition === 'cold'
-                    ? `Suhu Dingin, ${g.coldStorageMode === 'plain_fridge' ? 'langsung di kulkas' : 'chamber'} (4 ± 1 °C)`
-                    : 'Suhu Ruang (25 ± 2 °C)'}
-                </p>
-                <p className="text-[11px] font-mono text-white/50">
-                  {g.storageCondition === 'cold'
-                    ? g.coldStorageMode === 'plain_fridge'
-                      ? 'Penyimpanan: langsung di kulkas (tanpa chamber).'
-                      : `Penyimpanan: dalam chamber${g.chamberId ? ` — ${chamberName(g.chamberId)}` : ' (belum ditugaskan)'}.`
-                    : 'Penyimpanan: ruang (25 ± 1 °C).'}
-                </p>
-                <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3 mt-1.5">
-                  <DataPair label="Suhu udang sebelum observasi (°C)" value={num(g.labTempC, ' °C')} />
-                  <DataPair label="Temuan visual udang" value={VISUAL_LABEL[g.visualCheck] ?? g.visualCheck} />
-                  <DataPair label="Jumlah udang per sesi (ekor)" value={num(g.sampleShrimpCount)} />
-                  <DataPair label="Berat sampel sebelum observasi (g)" value={num(g.labWeightBeforeG, ' g')} />
-                  <DataPair label="Berat sampel sesudah observasi (g)" value={num(g.labWeightAfterG, ' g')} />
-                </dl>
-                {/* Butir 2: foto grup tampil di section grupnya. */}
-                {batch.photos.some((p) => p.groupId === g.groupId) && (
-                  <div className="mt-2">
-                    <p className="text-[11px] font-mono text-white/45">Foto grup</p>
-                    <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mt-1">
-                      {batch.photos
-                        .filter((p) => p.groupId === g.groupId)
-                        .map((p) => (
-                          <figure key={p.url} className="space-y-1">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={`/${p.url}`}
-                              alt={p.caption || `Foto grup ${g.groupId}`}
-                              className="w-full h-20 object-cover rounded-lg border border-white/10"
-                            />
-                            <figcaption className="text-[10px] font-mono text-white/50 truncate">
-                              {p.caption}
-                            </figcaption>
-                          </figure>
-                        ))}
-                    </div>
-                  </div>
-                )}
-                {isAdmin && !locked && editGroupId !== g.groupId && (
-                  <button type="button" onClick={() => startGroupEdit(g)} className={btnGhost}>
-                    Edit data grup
-                  </button>
-                )}
-                {isAdmin && !locked && editGroupId === g.groupId && groupDraft && (
-                  <form
-                    noValidate
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void saveGroupEdit(g);
-                    }}
-                    className="border-t border-white/10 pt-3 space-y-2"
+            <fieldset className="space-y-3">
+              <legend className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
+                Pengadaan
+              </legend>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="flex flex-col gap-1 col-span-1 sm:col-span-2">
+                  <span className="text-[11px] font-mono font-semibold text-white/80">
+                    Tanggal dan jam berangkat (WIB) <span aria-hidden="true" className="text-rose-400">*</span>
+                  </span>
+                  <input
+                    type="datetime-local"
+                    autoComplete="off"
+                    value={editDraft.stepA.departedAt}
+                    aria-invalid={!!editErrors?.stepA['departedAt']}
+                    onChange={(e) => updateStepA('departedAt', e.target.value)}
+                    className={editCls(!!editErrors?.stepA['departedAt'])}
+                  />
+                  {editErrors?.stepA['departedAt'] && (
+                    <span role="alert" className="text-[11px] font-mono text-rose-300">{editErrors.stepA['departedAt']}</span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-mono font-semibold text-white/80">
+                    Jenis sumber <span aria-hidden="true" className="text-rose-400">*</span>
+                  </span>
+                  <select
+                    value={editDraft.stepA.sourceType}
+                    aria-invalid={!!editErrors?.stepA['sourceType']}
+                    onChange={(e) => updateStepA('sourceType', e.target.value)}
+                    className={editCls(!!editErrors?.stepA['sourceType'])}
                   >
-                    <p className="text-[11px] font-mono text-white/60">
-                      Field memakai aturan yang sama dengan wizard: suhu -2 sampai 30 °C, berat lebih dari 0 g.
+                    <option value="market" className="bg-slate-900">Pasar</option>
+                    <option value="supermarket" className="bg-slate-900">Supermarket</option>
+                    <option value="farm" className="bg-slate-900">Tambak</option>
+                  </select>
+                  {editErrors?.stepA['sourceType'] && (
+                    <span role="alert" className="text-[11px] font-mono text-rose-300">{editErrors.stepA['sourceType']}</span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-mono font-semibold text-white/80">
+                    Sumber <span aria-hidden="true" className="text-rose-400">*</span>
+                  </span>
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={editDraft.stepA.marketSource}
+                    aria-invalid={!!editErrors?.stepA['marketSource']}
+                    onChange={(e) => updateStepA('marketSource', e.target.value)}
+                    placeholder="Pasar Induk Kramat Jati, Supermarket X…"
+                    className={editCls(!!editErrors?.stepA['marketSource'])}
+                  />
+                  {editErrors?.stepA['marketSource'] && (
+                    <span role="alert" className="text-[11px] font-mono text-rose-300">{editErrors.stepA['marketSource']}</span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-mono font-semibold text-white/80">
+                    Suhu cool box saat berangkat (°C) <span aria-hidden="true" className="text-rose-400">*</span>
+                  </span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={editDraft.stepA.coolerDeparture}
+                    aria-invalid={!!editErrors?.stepA['coolerDeparture']}
+                    onChange={(e) => updateStepA('coolerDeparture', e.target.value)}
+                    className={editCls(!!editErrors?.stepA['coolerDeparture'])}
+                  />
+                  {editErrors?.stepA['coolerDeparture'] && (
+                    <span role="alert" className="text-[11px] font-mono text-rose-300">{editErrors.stepA['coolerDeparture']}</span>
+                  )}
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset className="space-y-3">
+              <legend className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
+                Kondisi &amp; dokumentasi
+              </legend>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-mono font-semibold text-white/80">
+                    Tanggal dan jam beli (WIB) <span aria-hidden="true" className="text-rose-400">*</span>
+                  </span>
+                  <input
+                    type="datetime-local"
+                    autoComplete="off"
+                    value={editDraft.stepB.procuredAt}
+                    aria-invalid={!!editErrors?.stepB['procuredAt']}
+                    onChange={(e) => updateStepB('procuredAt', e.target.value)}
+                    className={editCls(!!editErrors?.stepB['procuredAt'])}
+                  />
+                  {editErrors?.stepB['procuredAt'] && (
+                    <span role="alert" className="text-[11px] font-mono text-rose-300">{editErrors.stepB['procuredAt']}</span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-mono font-semibold text-white/80">
+                    Tanggal dan jam tiba di lab (WIB) <span aria-hidden="true" className="text-rose-400">*</span>
+                  </span>
+                  <input
+                    type="datetime-local"
+                    autoComplete="off"
+                    value={editDraft.stepB.arrivedAt}
+                    aria-invalid={!!editErrors?.stepB['arrivedAt']}
+                    onChange={(e) => updateStepB('arrivedAt', e.target.value)}
+                    className={editCls(!!editErrors?.stepB['arrivedAt'])}
+                  />
+                  {editErrors?.stepB['arrivedAt'] && (
+                    <span role="alert" className="text-[11px] font-mono text-rose-300">{editErrors.stepB['arrivedAt']}</span>
+                  )}
+                  {deviasiJamWib(editDraft.stepB.procuredAt, editDraft.stepB.arrivedAt) > 3 && (
+                    <label className="flex items-center gap-1.5 text-[10px] font-mono text-amber-200/90 mt-0.5">
+                      <input
+                        type="checkbox"
+                        checked={editDraft.stepB.deviationAck}
+                        onChange={(e) =>
+                          setEditDraft((d) =>
+                            d ? { ...d, stepB: { ...d.stepB, deviationAck: e.target.checked } } : d
+                          )
+                        }
+                        className="accent-amber-400"
+                      />
+                      Deviasi cold-chain (&gt; 3 jam) — catat sebagai deviasi
+                    </label>
+                  )}
+                </label>
+                <span className="hidden md:block" />
+                <RadioPair
+                  legend="Kondisi awal udang"
+                  name="edit-initialCondition"
+                  value={editDraft.stepB.initialCondition}
+                  options={[['alive', 'Hidup saat dibeli'], ['dead', 'Mati saat dibeli']]}
+                  onChange={(v) => updateStepB('initialCondition', v)}
+                />
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-mono font-semibold text-white/80">
+                    Jumlah total udang (ekor) <span aria-hidden="true" className="text-rose-400">*</span>
+                  </span>
+                  <input
+                    name="edit-shrimpCount"
+                    type="number"
+                    step="1"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={editDraft.stepB.shrimpCount}
+                    aria-invalid={!!editErrors?.stepB['shrimpCount']}
+                    onChange={(e) => updateStepB('shrimpCount', e.target.value)}
+                    className={editCls(!!editErrors?.stepB['shrimpCount'])}
+                  />
+                  {editErrors?.stepB['shrimpCount'] && (
+                    <span role="alert" className="text-[11px] font-mono text-rose-300">{editErrors.stepB['shrimpCount']}</span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-mono font-semibold text-white/80">
+                    Berat total udang (gram) <span aria-hidden="true" className="text-rose-400">*</span>
+                  </span>
+                  <input
+                    name="edit-totalWeightG"
+                    type="number"
+                    step="0.1"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={editDraft.stepB.totalWeightG}
+                    aria-invalid={!!editErrors?.stepB['totalWeightG']}
+                    onChange={(e) => updateStepB('totalWeightG', e.target.value)}
+                    className={editCls(!!editErrors?.stepB['totalWeightG'])}
+                  />
+                  {editErrors?.stepB['totalWeightG'] && (
+                    <span role="alert" className="text-[11px] font-mono text-rose-300">{editErrors.stepB['totalWeightG']}</span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-mono font-semibold text-white/80">
+                    Panjang udang (cm) <span aria-hidden="true" className="text-rose-400">*</span>
+                  </span>
+                  <input
+                    name="edit-shrimpLengthCm"
+                    type="number"
+                    step="0.1"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={editDraft.stepB.shrimpLengthCm}
+                    aria-invalid={!!editErrors?.stepB['shrimpLengthCm']}
+                    onChange={(e) => updateStepB('shrimpLengthCm', e.target.value)}
+                    className={editCls(!!editErrors?.stepB['shrimpLengthCm'])}
+                  />
+                  {editErrors?.stepB['shrimpLengthCm'] && (
+                    <span role="alert" className="text-[11px] font-mono text-rose-300">{editErrors.stepB['shrimpLengthCm']}</span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-mono font-semibold text-white/80">
+                    Suhu awal udang (°C) <span aria-hidden="true" className="text-rose-400">*</span>
+                  </span>
+                  <input
+                    name="edit-initialTempC"
+                    type="number"
+                    step="0.1"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={editDraft.stepB.initialTempC}
+                    aria-invalid={!!editErrors?.stepB['initialTempC']}
+                    onChange={(e) => updateStepB('initialTempC', e.target.value)}
+                    className={editCls(!!editErrors?.stepB['initialTempC'])}
+                  />
+                  {editErrors?.stepB['initialTempC'] && (
+                    <span role="alert" className="text-[11px] font-mono text-rose-300">{editErrors.stepB['initialTempC']}</span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-mono font-semibold text-white/80">
+                    Suhu cool box saat di pasar (°C) <span aria-hidden="true" className="text-rose-400">*</span>
+                  </span>
+                  <input
+                    name="edit-coolerMarket"
+                    type="number"
+                    step="0.1"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={editDraft.stepB.coolerMarket}
+                    aria-invalid={!!editErrors?.stepB['coolerMarket']}
+                    onChange={(e) => updateStepB('coolerMarket', e.target.value)}
+                    className={editCls(!!editErrors?.stepB['coolerMarket'])}
+                  />
+                  {editErrors?.stepB['coolerMarket'] && (
+                    <span role="alert" className="text-[11px] font-mono text-rose-300">{editErrors.stepB['coolerMarket']}</span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-mono font-semibold text-white/80">
+                    Suhu cool box saat di lab (°C) <span aria-hidden="true" className="text-rose-400">*</span>
+                  </span>
+                  <input
+                    name="edit-coolerLab"
+                    type="number"
+                    step="0.1"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={editDraft.stepB.coolerLab}
+                    aria-invalid={!!editErrors?.stepB['coolerLab']}
+                    onChange={(e) => updateStepB('coolerLab', e.target.value)}
+                    className={editCls(!!editErrors?.stepB['coolerLab'])}
+                  />
+                  {editErrors?.stepB['coolerLab'] && (
+                    <span role="alert" className="text-[11px] font-mono text-rose-300">{editErrors.stepB['coolerLab']}</span>
+                  )}
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset className="space-y-4">
+              <legend className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
+                Pengelompokan
+              </legend>
+              {batch.sampleGroups.map((g) => {
+                const draft = editDraft.groups[g.groupId];
+                const gErr = editErrors?.groups[g.groupId] ?? {};
+                if (!draft) return null;
+                return (
+                  <div
+                    key={g.groupId}
+                    className={`rounded-xl p-3 space-y-2 bg-black/25 pl-3 border-l-2 ${
+                      g.storageCondition === 'cold' ? 'border-cyan-400/60' : 'border-amber-300/60'
+                    }`}
+                  >
+                    <p className="text-xs font-mono font-bold text-white">
+                      {g.groupId} •{' '}
+                      {g.storageCondition === 'cold'
+                        ? `Suhu Dingin, ${draft.coldStorageMode === 'plain_fridge' ? 'langsung di kulkas' : 'chamber'} (4 ± 1 °C)`
+                        : 'Suhu Ruang (25 ± 2 °C)'}
                     </p>
                     {g.storageCondition === 'cold' && (
-                      <fieldset className="space-y-1">
-                        <legend className="text-[11px] font-mono font-semibold text-white/80">
-                          Tempat penyimpanan (butir 1)
-                        </legend>
-                        <div className="flex flex-wrap gap-3">
-                          {(
-                            [
-                              ['chamber', 'Dalam chamber'],
-                              ['plain_fridge', 'Langsung di kulkas, tanpa chamber'],
-                            ] as const
-                          ).map(([value, label]) => (
-                            <label key={value} className="flex items-center gap-1.5 text-[11px] font-mono text-white/80">
-                              <input
-                                type="radio"
-                                name={`cold-mode-${g.groupId}`}
-                                checked={groupDraft.coldStorageMode === value}
-                                onChange={() =>
-                                  setGroupDraft((prev) =>
-                                    prev ? { ...prev, coldStorageMode: value } : prev
-                                  )
-                                }
-                                className="accent-cyan-400"
-                              />
-                              {label}
-                            </label>
-                          ))}
-                        </div>
-                        {groupDraft.coldStorageMode === 'plain_fridge' && (
-                          <p className="text-[11px] font-mono text-amber-200/80">
-                            Grup ini tanpa chamber — pemilihan chamber disembunyikan saat mulai sesi.
-                          </p>
-                        )}
-                      </fieldset>
+                      <RadioPair
+                        legend="Tempat penyimpanan"
+                        name={`edit-cold-mode-${g.groupId}`}
+                        value={draft.coldStorageMode}
+                        options={[['chamber', 'Dalam chamber'], ['plain_fridge', 'Langsung di kulkas, tanpa chamber']]}
+                        onChange={(v) => updateGroup(g.groupId, 'coldStorageMode', v)}
+                      />
                     )}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       {(
                         [
-                          ['labTempC', 'Suhu udang sebelum observasi (°C)', '6.5…'],
+                          ['labTempC', 'Suhu udang (°C)', '6.5…'],
                           ['labWeightBeforeG', 'Berat sampel sebelum observasi (g)', '482.0…'],
-                          ['labWeightAfterG', 'Berat sampel sesudah observasi (g)', '478.5…'],
+                          ['labWeightAfterG', 'Berat total udang (g)', '478.5…'],
                         ] as const
                       ).map(([key, label, placeholder]) => (
                         <label key={key} className="flex flex-col gap-1">
-                          <span className="text-[11px] font-mono font-semibold text-white/80">{label}</span>
+                          <span className="text-[11px] font-mono font-semibold text-white/80">
+                            {label} <span aria-hidden="true" className="text-rose-400">*</span>
+                          </span>
                           <input
-                            id={key}
-                            name={key}
+                            name={`edit-${g.groupId}-${key}`}
                             type="number"
                             step="0.1"
                             inputMode="decimal"
                             autoComplete="off"
-                            value={groupDraft[key]}
-                            aria-required="true"
-                            aria-invalid={!!groupErrors[key]}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              setGroupDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
-                              setGroupErrors((prev) => {
-                                if (!prev[key]) return prev;
-                                const next = { ...prev };
-                                delete next[key];
-                                return next;
-                              });
-                            }}
+                            value={draft[key]}
+                            aria-invalid={!!gErr[key]}
+                            onChange={(e) => updateGroup(g.groupId, key, e.target.value)}
                             placeholder={placeholder}
-                            className={`w-full px-3 py-2 rounded-xl bg-black/25 border text-sm font-mono text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-400/60 ${
-                              groupErrors[key] ? 'border-rose-400/70' : 'border-white/10'
-                            }`}
+                            className={editCls(!!gErr[key])}
                           />
-                          {groupErrors[key] && (
-                            <span role="alert" className="text-[11px] font-mono text-rose-300">
-                              {groupErrors[key]}
-                            </span>
+                          {gErr[key] && (
+                            <span role="alert" className="text-[11px] font-mono text-rose-300">{gErr[key]}</span>
                           )}
                         </label>
                       ))}
                     </div>
-                    {draftWeightWarning(g) && (
-                      <p className="text-[11px] font-mono text-amber-200/90">{draftWeightWarning(g)}</p>
+                    {groupWeightWarning({
+                      labTempC: draft.labTempC,
+                      visualCheck: g.visualCheck,
+                      labWeightBeforeG: draft.labWeightBeforeG,
+                      labWeightAfterG: draft.labWeightAfterG,
+                      sampleShrimpCount: String(g.sampleShrimpCount),
+                    }) && (
+                      <p className="text-[11px] font-mono text-amber-200/90">
+                        {groupWeightWarning({
+                          labTempC: draft.labTempC,
+                          visualCheck: g.visualCheck,
+                          labWeightBeforeG: draft.labWeightBeforeG,
+                          labWeightAfterG: draft.labWeightAfterG,
+                          sampleShrimpCount: String(g.sampleShrimpCount),
+                        })}
+                      </p>
                     )}
-                    <div className="flex gap-2">
-                      <button type="submit" disabled={savingGroup} className={btnPrimary}>
-                        Simpan perubahan
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditGroupId(null);
-                          setGroupDraft(null);
-                        }}
-                        disabled={savingGroup}
-                        className={btnGhost}
-                      >
-                        Batal
-                      </button>
-                    </div>
-                  </form>
-                )}
+                  </div>
+                );
+              })}
+            </fieldset>
+
+            <div className="flex gap-2">
+              <button type="submit" disabled={savingEdit} className={btnPrimary}>
+                Simpan perubahan
+              </button>
+              <button type="button" onClick={closeEdit} disabled={savingEdit} className={btnGhost}>
+                Batal
+              </button>
+            </div>
+          </form>
+        )}
+
+        {!editOpen && (
+          <>
+            <div>
+              <p className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
+                Pengadaan
+              </p>
+              <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3">
+                <DataPair
+                  label="Tanggal dan jam berangkat (WIB)"
+                  value={batch.departedAtUtc ? dtFmt.format(new Date(batch.departedAtUtc)) : '—'}
+                />
+                <DataPair label="Sumber" value={batch.marketSource} />
+                <DataPair label="Jenis sumber" value={SOURCE_LABEL[batch.sourceType] ?? batch.sourceType} />
+                <DataPair label="Suhu cool box saat berangkat (°C)" value={num(batch.coolerTempDepartureC, ' °C')} />
+              </dl>
+            </div>
+
+            <div>
+              <p className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
+                Kondisi &amp; dokumentasi
+              </p>
+              <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3">
+                <DataPair label="Tanggal dan jam beli (WIB)" value={dtFmt.format(new Date(batch.procuredAtUtc))} />
+                <DataPair label="Tanggal dan jam tiba di lab (WIB)" value={dtFmt.format(new Date(batch.arrivedAtUtc))} />
+                <DataPair label="Durasi beli ke tiba" value={durationText(batch.procuredAtUtc, batch.arrivedAtUtc)} />
+                <DataPair label="Kondisi awal udang" value={CONDITION_LABEL[batch.initialCondition] ?? batch.initialCondition} />
+                <DataPair label="Jumlah total udang (ekor)" value={num(batch.shrimpCount)} />
+                <DataPair label="Berat total udang (g)" value={num(batch.totalWeightG, ' g')} />
+                <DataPair label="Panjang udang (cm)" value={num(batch.shrimpLengthCm, ' cm')} />
+                <DataPair label="Ukuran (ekor/kg)" value={num(batch.sizeGrade)} />
+                <DataPair label="Suhu awal udang (°C)" value={num(batch.initialTempC, ' °C')} />
+                <DataPair label="Suhu cool box saat di pasar (°C)" value={num(batch.coolerTempMarketC, ' °C')} />
+                <DataPair label="Suhu cool box saat di lab (°C)" value={num(batch.coolerTempLabC, ' °C')} />
+              </dl>
+              <p className="text-[11px] font-mono text-white/40 mt-1.5">
+                Foto kondisi awal tampil di kartu Foto Dokumentasi di bawah.
+              </p>
+            </div>
+
+            <div>
+              <p className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
+                Pengelompokan
+              </p>
+              <div className="space-y-4">
+                {batch.sampleGroups.map((g) => (
+                  <div
+                    key={g.groupId}
+                    className={`pl-3 border-l-2 ${
+                      g.storageCondition === 'cold' ? 'border-cyan-400/60' : 'border-amber-300/60'
+                    }`}
+                  >
+                    <p className="text-xs font-mono font-bold text-white">
+                      {g.groupId} •{' '}
+                      {g.storageCondition === 'cold'
+                        ? `Suhu Dingin, ${g.coldStorageMode === 'plain_fridge' ? 'langsung di kulkas' : 'chamber'} (4 ± 1 °C)`
+                        : 'Suhu Ruang (25 ± 2 °C)'}
+                    </p>
+                    <p className="text-[11px] font-mono text-white/50">
+                      {g.storageCondition === 'cold'
+                        ? g.coldStorageMode === 'plain_fridge'
+                          ? 'Penyimpanan: langsung di kulkas (tanpa chamber).'
+                          : `Penyimpanan: dalam chamber${g.chamberId ? ` — ${chamberName(g.chamberId)}` : ' (belum ditugaskan)'}.`
+                        : 'Penyimpanan: ruang (25 ± 1 °C).'}
+                    </p>
+                    <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-3 mt-1.5">
+                      <DataPair label="Suhu udang (°C)" value={num(g.labTempC, ' °C')} />
+                      <DataPair label="Temuan visual udang" value={VISUAL_LABEL[g.visualCheck] ?? g.visualCheck} />
+                      <DataPair label="Jumlah udang per sesi (ekor)" value={num(g.sampleShrimpCount)} />
+                      <DataPair label="Berat sampel sebelum observasi (g)" value={num(g.labWeightBeforeG, ' g')} />
+                      <DataPair label="Berat total udang (g)" value={num(g.labWeightAfterG, ' g')} />
+                    </dl>
+                    {/* Butir 2: foto grup tampil di section grupnya. */}
+                    {batch.photos.some((p) => p.groupId === g.groupId) && (
+                      <div className="mt-2">
+                        <p className="text-[11px] font-mono text-white/45">Foto grup</p>
+                        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mt-1">
+                          {batch.photos
+                            .filter((p) => p.groupId === g.groupId)
+                            .map((p) => (
+                              <figure key={p.url} className="space-y-1">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={`/${p.url}`}
+                                  alt={p.caption || `Foto grup ${g.groupId}`}
+                                  className="w-full h-20 object-cover rounded-lg border border-white/10"
+                                />
+                                <figcaption className="text-[10px] font-mono text-white/50 truncate">
+                                  {p.caption}
+                                </figcaption>
+                              </figure>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
+          </>
+        )}
       </div>
 
       <div className={cardCls}>
@@ -1016,9 +1550,7 @@ export default function BatchDetailPage() {
                 Upload{files.length > 0 ? ` (${files.length})` : ''}
               </button>
             </div>
-            {files.length === 0 ? (
-              <p className="text-[11px] font-mono text-white/50">Belum ada foto dipilih — pratinjau tampil di sini sebelum diunggah.</p>
-            ) : (
+            {files.length > 0 && (
               <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                 {filePreviews.map((src, i) => (
                   <div key={src} className="relative space-y-1">
@@ -1059,8 +1591,6 @@ export default function BatchDetailPage() {
         const seq = g.storageCondition === 'cold' ? SD_TIMEPOINTS : SR_TIMEPOINTS;
         const taken = usedCodes(g);
         const available = seq.filter((t) => !taken.has(t));
-        const running = g.sessions.filter((s) => s.status === 'open');
-        const history = g.sessions.filter((s) => s.status !== 'open');
         return (
           <div key={g.groupId} className={cardCls}>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1071,78 +1601,134 @@ export default function BatchDetailPage() {
                 Jadwal timepoint: {seq.join(' · ')}
               </p>
             </div>
-            {running.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-[11px] font-mono font-bold tracking-widest uppercase text-cyan-300/80">
-                  Sesi berjalan
-                </p>
-                <ul className="space-y-2">
-                  {running.map((s) => (
-                    <li key={s.sessionId} className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-black/25 border border-cyan-400/20">
-                      <div className="text-xs font-mono text-white/80">
-                        <span className="font-bold text-white">{s.timepointCode}</span>
-                        <span className="text-white/50"> ({s.elapsedHours} jam)</span>{' '}
-                        <span className="text-[10px] px-1.5 py-0.5 rounded border uppercase bg-cyan-500/20 text-cyan-300 border-cyan-500/30">
-                          {s.status}
-                        </span>
-                      </div>
-                      {isAdmin && !locked && (
-                        <label className="flex items-center gap-2 text-[11px] font-mono text-white/70 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={!!cleaning[s.sessionId]}
-                            onChange={(e) => setCleaning({ ...cleaning, [s.sessionId]: e.target.checked })}
-                            className="accent-emerald-500"
-                          />
-                          Cleaning 70%
-                          <button onClick={() => void handleComplete(s)} disabled={busy || !cleaning[s.sessionId]} className={btnPrimary} title={!cleaning[s.sessionId] ? 'Centang cleaning 70% dulu' : 'Selesaikan sesi'}>
-                            Complete
-                          </button>
-                        </label>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+            {g.sessions.length > 0 && (
+              <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/15">
+                <table className="w-full min-w-[620px] text-left border-collapse">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-widest font-mono text-white/50 border-b border-white/10">
+                      <th scope="col" className="px-3 py-2">Tahap</th>
+                      <th scope="col" className="px-3 py-2">Timepoint</th>
+                      <th scope="col" className="px-3 py-2">Suhu</th>
+                      <th scope="col" className="px-3 py-2">Berat</th>
+                      <th scope="col" className="px-3 py-2">Foto</th>
+                      <th scope="col" className="px-3 py-2">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {g.sessions.map((s) => {
+                      const tahap = tahapOf(g, s.timepointCode);
+                      const fotoTahap = batch.photos.filter((p) => p.sessionId === s.sessionId);
+                      const runable = isAdmin && !locked && s.status === 'open';
+                      const reopnable = isAdmin && !locked && s.status === 'incomplete';
+                      const editable = isAdmin && !locked;
+                      return (
+                        <tr key={s.sessionId} className="border-b border-white/5 last:border-b-0">
+                          <td className="px-3 py-2 text-sm font-mono font-bold text-white">{tahap}</td>
+                          <td className="px-3 py-2">
+                            <div className="text-xs font-mono">
+                              <span className="font-bold text-white">{s.timepointCode}</span>
+                              <span className="text-white/45"> ({s.elapsedHours} jam)</span>
+                            </div>
+                            <span
+                              className={`text-[10px] px-1.5 py-0.5 rounded border uppercase font-mono ${
+                                s.status === 'open'
+                                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+                                  : s.status === 'complete'
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                    : 'bg-white/10 text-white/60 border-white/20'
+                              }`}
+                              title={s.status === 'incomplete' ? 'Selesai tanpa data tertaut — bisa diulang' : undefined}
+                            >
+                              {s.status}
+                            </span>
+                            {s.chamberId && (
+                              <div className="text-[10px] font-mono text-white/40 mt-0.5">
+                                Chamber: {chamberName(s.chamberId)}
+                                {deviceLabel(s.deviceId) ? ` — ${deviceLabel(s.deviceId)}` : ''}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-xs font-mono" data-suhu-tahap={s.timepointCode}>
+                            {s.shrimpTempC === null || s.shrimpTempC === undefined ? EM_DASH : `${tabelNumFmt.format(s.shrimpTempC)} °C`}
+                          </td>
+                          <td className="px-3 py-2 text-xs font-mono" data-berat-tahap={s.timepointCode}>
+                            {s.shrimpWeightG === null || s.shrimpWeightG === undefined ? EM_DASH : `${tabelNumFmt.format(s.shrimpWeightG)} g`}
+                          </td>
+                          <td className="px-3 py-2">
+                            {fotoTahap.length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPhotoViewer({
+                                    title: `Foto ${g.groupId} tahap ${tahap} (${s.timepointCode})`,
+                                    items: fotoTahap.map((p, i) => ({ url: p.url, caption: p.caption, index: i + 1 })),
+                                  })
+                                }
+                                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/30 text-cyan-200 text-[11px] font-mono"
+                                aria-label={`Lihat ${fotoTahap.length} foto tahap ${tahap} (${s.timepointCode})`}
+                                title="Tampilkan foto dan caption tahap ini"
+                              >
+                                <CameraIcon className="w-3.5 h-3.5" aria-hidden="true" />
+                                {fotoTahap.length} foto
+                              </button>
+                            ) : (
+                              <span className="text-white/30 font-mono text-xs">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex flex-col items-start gap-1.5">
+                              {editable ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openSessionEdit(g, s)}
+                                  className={btnAksi}
+                                  aria-label={`Edit data tahap ${tahap} (${s.timepointCode})`}
+                                  title="Edit suhu, berat, dan foto tahap ini"
+                                >
+                                  <PencilIcon className="w-4 h-4" aria-hidden="true" />
+                                </button>
+                              ) : null}
+                              {runable && (
+                                <label className="flex items-center gap-1.5 text-[10px] font-mono text-white/70 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!cleaning[s.sessionId]}
+                                    onChange={(e) => setCleaning({ ...cleaning, [s.sessionId]: e.target.checked })}
+                                    className="accent-emerald-500"
+                                  />
+                                  Cleaning 70%
+                                  <button
+                                    onClick={() => void handleComplete(s)}
+                                    disabled={busy || !cleaning[s.sessionId]}
+                                    className="px-2 py-1 rounded-lg bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-400/40 text-emerald-100 text-[10px] font-mono font-bold disabled:opacity-50"
+                                    title={!cleaning[s.sessionId] ? 'Centang cleaning 70% dulu' : 'Selesaikan sesi'}
+                                  >
+                                    Complete
+                                  </button>
+                                </label>
+                              )}
+                              {reopnable && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleReopen(s)}
+                                  className={btnAksi}
+                                  aria-label={`Ulangi tahap ${tahap} (${s.timepointCode})`}
+                                  title="Buka ulang sesi untuk mengukur ulang timepoint ini"
+                                >
+                                  <RepeatIcon className="w-4 h-4" aria-hidden="true" />
+                                </button>
+                              )}
+                              {!editable && !runable && !reopnable ? (
+                                <span className="text-white/30 font-mono text-xs">—</span>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            )}
-            {history.length > 0 && (
-              <details className="rounded-xl bg-black/15 border border-white/10 px-3 py-2">
-                <summary className="cursor-pointer text-[11px] font-mono font-bold tracking-widest uppercase text-white/50 hover:text-white/80">
-                  Riwayat ({history.length})
-                </summary>
-                <ul className="mt-2 space-y-2">
-                  {history.map((s) => (
-                    <li key={s.sessionId} className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-black/25 border border-white/10">
-                      <div className="text-xs font-mono text-white/80">
-                        <span className="font-bold text-white">{s.timepointCode}</span>
-                        <span className="text-white/50"> ({s.elapsedHours} jam)</span>{' '}
-                        <span
-                          className={`text-[10px] px-1.5 py-0.5 rounded border uppercase ${
-                            s.status === 'complete'
-                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                              : 'bg-white/10 text-white/60 border-white/20'
-                          }`}
-                          title={s.status === 'incomplete' ? 'Selesai tanpa data tertaut — bisa diulang' : undefined}
-                        >
-                          {s.status}
-                        </span>
-                        {s.chamberId && (
-                          <span className="text-[10px] font-mono text-white/45">
-                            {' '}
-                            • Chamber: {chamberName(s.chamberId)}
-                            {deviceLabel(s.deviceId) ? ` — Device: ${deviceLabel(s.deviceId)}` : ''}
-                          </span>
-                        )}
-                      </div>
-                      {isAdmin && !locked && s.status === 'incomplete' && (
-                        <button onClick={() => void handleReopen(s)} disabled={busy} className={btnGhost} title="Buka ulang sesi untuk mengukur ulang timepoint ini">
-                          Ulangi
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </details>
             )}
             {g.sessions.length === 0 && (
               <p className="text-xs font-mono text-white/50">Belum ada sesi observasi. Pilih timepoint di bawah lalu mulai sesi pertama.</p>
@@ -1217,11 +1803,14 @@ export default function BatchDetailPage() {
           </div>
         );
       })}
-      {/* Modal form pra-sesi: wajib diisi sebelum sesi dibuat. */}
-      {preSessionModal && (
+      {/* Modal form tahap: data observasi sebelum sesi dibuat, atau koreksi
+          data tahap lewat ikon pensil di tabel riwayat. Judul dinamis: nomor
+          tahap = posisi timepoint di jadwal grup (H0→Tahap 1, H6 SR→Tahap 2,
+          D1 SD→Tahap 2, dst.). */}
+      {sessionModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60"
-          onClick={() => setPreSessionModal(null)}
+          onClick={() => setSessionModal(null)}
           role="presentation"
         >
           <div
@@ -1233,30 +1822,31 @@ export default function BatchDetailPage() {
             className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-white/15 p-5 space-y-4"
           >
             <h3 id="pre-session-title" className="text-base font-mono font-bold text-white">
-              Observasi Pra-Sesi — {preSessionModal.timepointCode}
+              {sessionModal.mode === 'edit' ? 'Edit Tahap' : 'Tahap'}{' '}
+              {(() => {
+                const modalGroup = batch.sampleGroups.find((g) => g.groupId === sessionModal.groupId);
+                return modalGroup ? tahapOf(modalGroup, sessionModal.timepointCode) : '';
+              })()}
             </h3>
-            <p className="text-[13px] font-mono text-white/75 leading-relaxed">
-              Isi data observasi dulu, lalu sesi baru dimulai kembali.
-            </p>
-            {preSessionModal.err && (
+            {sessionModal.err && (
               <p role="alert" className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs font-mono">
-                {preSessionModal.err}
+                {sessionModal.err}
               </p>
             )}
             <div className="space-y-3">
               <div>
                 <label htmlFor="pre-temp" className="block text-[12px] font-mono text-white/75 mb-1">
-                  Suhu udang sebelum observasi (°C)
+                  Suhu udang (°C)
                 </label>
                 <input
                   id="pre-temp"
                   type="number"
                   step="0.1"
                   lang="en"
-                  aria-label="Suhu udang sebelum observasi dalam derajat Celsius, titik desimal pakai titik"
-                  value={preSessionModal.labTempC}
+                  aria-label="Suhu udang dalam derajat Celsius, titik desimal pakai titik"
+                  value={sessionModal.shrimpTempC}
                   onChange={(e) =>
-                    setPreSessionModal((m) => (m ? { ...m, labTempC: e.target.value } : null))}
+                    setSessionModal((m) => (m ? { ...m, shrimpTempC: e.target.value } : null))}
                   placeholder="Contoh: 28.5"
                   className="w-full px-3 py-2.5 rounded-xl bg-black/25 border border-white/10 text-white text-sm font-mono placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
                 />
@@ -1266,16 +1856,16 @@ export default function BatchDetailPage() {
               </div>
               <div>
                 <label htmlFor="pre-weight" className="block text-[12px] font-mono text-white/75 mb-1">
-                  Berat sampel sesudah observasi (g)
+                  Berat total udang (g)
                 </label>
                 <input
                   id="pre-weight"
                   type="number"
                   step="0.1"
-                  aria-label="Berat sampel sesudah observasi dalam gram, titik desimal pakai titik"
-                  value={preSessionModal.labWeightAfterG}
+                  aria-label="Berat total udang dalam gram, titik desimal pakai titik"
+                  value={sessionModal.shrimpWeightG}
                   onChange={(e) =>
-                    setPreSessionModal((m) => (m ? { ...m, labWeightAfterG: e.target.value } : null))}
+                    setSessionModal((m) => (m ? { ...m, shrimpWeightG: e.target.value } : null))}
                   placeholder="Contoh: 478.5"
                   className="w-full px-3 py-2.5 rounded-xl bg-black/25 border border-white/10 text-white text-sm font-mono placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
                 />
@@ -1285,7 +1875,7 @@ export default function BatchDetailPage() {
               </div>
               <div>
                 <label htmlFor="pre-photo" className="block text-[12px] font-mono text-white/75 mb-1">
-                  Foto dokumentasi (opsional)
+                  Foto dokumentasi
                 </label>
                 <input
                   id="pre-photo"
@@ -1299,12 +1889,12 @@ export default function BatchDetailPage() {
                       (f) => /image\/(jpeg|png)/.test(f.type) && f.size > 0 && f.size <= MAX_PHOTO_BYTES
                     );
                     if (usable.length !== incoming.length) {
-                      setPreSessionModal((m) => (m ? {
+                      setSessionModal((m) => (m ? {
                         ...m,
                         err: 'Beberapa file dilewati: wajib jpg/png maks 5MB.',
                       } : null));
                     }
-                    setPreSessionModal((m) => (m ? {
+                    setSessionModal((m) => (m ? {
                       ...m,
                       photos: usable,
                       photoPreviews: usable.map((f) => URL.createObjectURL(f)),
@@ -1314,9 +1904,9 @@ export default function BatchDetailPage() {
                   }}
                   className="w-full text-xs font-mono text-white/60 file:mr-2 file:px-3 file:py-1.5 file:rounded-lg file:bg-white/10 file:border file:border-white/10 file:text-white/80 file:text-xs file:font-mono"
                 />
-                {preSessionModal.photoPreviews.length > 0 && (
+                {sessionModal.photoPreviews.length > 0 && (
                   <div className="grid grid-cols-2 gap-2 mt-2">
-                    {preSessionModal.photoPreviews.map((src, i) => (
+                    {sessionModal.photoPreviews.map((src, i) => (
                       <div key={src} className="relative space-y-1">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
@@ -1328,9 +1918,10 @@ export default function BatchDetailPage() {
                           type="text"
                           maxLength={MAX_PHOTO_CAPTION_LENGTH}
                           autoComplete="off"
-                          value={preSessionModal.photoCaptions[i] ?? ''}
+                          aria-label={`Caption foto ${i + 1}`}
+                          value={sessionModal.photoCaptions[i] ?? ''}
                           onChange={(e) =>
-                            setPreSessionModal((m) => (m ? {
+                            setSessionModal((m) => (m ? {
                               ...m,
                               photoCaptions: m.photoCaptions.map((c, j) => (j === i ? e.target.value : c)),
                             } : null))}
@@ -1340,7 +1931,7 @@ export default function BatchDetailPage() {
                         <button
                           type="button"
                           onClick={() =>
-                            setPreSessionModal((m) => (m ? {
+                            setSessionModal((m) => (m ? {
                               ...m,
                               photos: m.photos.filter((_, j) => j !== i),
                               photoPreviews: m.photoPreviews.filter((_, j) => j !== i),
@@ -1359,19 +1950,69 @@ export default function BatchDetailPage() {
             </div>
             <div className="flex gap-2">
               <button
-                onClick={() => setPreSessionModal(null)}
-                disabled={preSessionModal.busy}
+                onClick={() => setSessionModal(null)}
+                disabled={sessionModal.busy}
                 className="flex-1 py-2.5 rounded-xl bg-transparent hover:bg-white/10 border border-white/15 text-white/80 text-sm font-mono font-bold transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
               >
                 Batal
               </button>
               <button
-                onClick={() => void handlePreSessionSubmit()}
-                disabled={preSessionModal.busy}
+                onClick={() => void handleSessionModalSubmit()}
+                disabled={sessionModal.busy}
                 className="flex-1 py-2.5 rounded-xl bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-400/50 text-emerald-100 text-sm font-mono font-bold transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
               >
-                {preSessionModal.busy ? 'Memproses…' : 'Mulai Sesi'}
+                {sessionModal.busy
+                  ? 'Memproses…'
+                  : sessionModal.mode === 'edit'
+                    ? 'Simpan Perubahan'
+                    : 'Mulai Sesi'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Penampil foto tahap: gambar + caption per sesi, dari kolom Foto tabel. */}
+      {photoViewer && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70"
+          onClick={() => setPhotoViewer(null)}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="photo-viewer-title"
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: 'linear-gradient(180deg, #24407f 0%, #16295c 100%)' }}
+            className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/15 p-5 space-y-4"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h3 id="photo-viewer-title" className="text-base font-mono font-bold text-white">
+                {photoViewer.title}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setPhotoViewer(null)}
+                aria-label="Tutup penampil foto"
+                className={btnAksi}
+              >
+                ×
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {photoViewer.items.map((item) => (
+                <figure key={item.url} className="space-y-1">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={`/${item.url}`}
+                    alt={item.caption}
+                    className="w-full h-48 object-cover rounded-xl border border-white/15"
+                  />
+                  <figcaption className="text-[11px] font-mono text-white/70">
+                    {item.index}. {item.caption}
+                  </figcaption>
+                </figure>
+              ))}
             </div>
           </div>
         </div>
