@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '../../../components/auth/AuthProvider';
 import ConfirmDialog from '../../../components/ui/ConfirmDialog';
 import SuccessNotice, { useSuccessNotice } from '../../../components/ui/SuccessNotice';
+import SessionResultModal from '../../../components/batches/SessionResultModal';
 import { PencilIcon, RepeatIcon, CameraIcon } from '../../../components/ui/icons';
 import { TIMEPOINT_SEQUENCES, MAX_PHOTO_BYTES, MAX_PHOTO_CAPTION_LENGTH, wibDateTimeLocal } from '../../../shared/dataset.ts';
 import { validateStepA, validateStepB, validateGroupFields, groupWeightWarning, parseWibInput, wibInputToUtcIso, type WizardErrors } from '../../../lib/batch-wizard.ts';
@@ -19,6 +20,8 @@ interface SessionItem {
   cleaningDone: boolean;
   chamberId: string | null;
   deviceId: string | null;
+  startedAtUtc?: string;
+  durationSeconds?: number | null;
   shrimpTempC: number | null;
   shrimpWeightG: number | null;
 }
@@ -270,12 +273,26 @@ export default function BatchDetailPage() {
     }>;
   } | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  // Durasi pengujian per group (dalam menit, default 15 menit)
+  const [durationMins, setDurationMins] = useState<Record<string, number>>({});
+  // Sesi yang sedang dibuka modal grafiknya
+  const [resultModalSessionId, setResultModalSessionId] = useState<string | null>(null);
+  const completingRef = React.useRef<Set<string>>(new Set());
+
+  // Tick timer per detik untuk live countdown sesi berjalan
+  const [nowMs, setNowMs] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   // Modal form pra-sesi: input suhu berat foto sebelum start sesi.
   const [sessionModal, setSessionModal] = useState<{
     mode: 'create' | 'edit';
     groupId: string;
     sessionId?: string;
     timepointCode: string;
+    durationMinutes: number;
     shrimpTempC: string;
     shrimpWeightG: string;
     photos: File[];
@@ -437,11 +454,13 @@ export default function BatchDetailPage() {
       setError('Nyalakan sensor 30 menit dulu (centang warmup) sebelum Start sesi');
       return;
     }
+    const defaultMins = durationMins[g.groupId] ?? 15;
     // Modal form tahap baru: isi suhu/berat/foto dulu, sesi dibuat setelah submit.
     setSessionModal({
       mode: 'create',
       groupId: g.groupId,
       timepointCode,
+      durationMinutes: defaultMins,
       shrimpTempC: '',
       shrimpWeightG: '',
       photos: [],
@@ -453,15 +472,16 @@ export default function BatchDetailPage() {
   };
 
   const openSessionEdit = (g: GroupItem, s: SessionItem) => {
-      // Ikon pensil di tabel riwayat: koreksi data observasi satu tahap.
-      // Input type=number memakai titik desimal, jadi prefill tanpa konversi.
-      setSessionModal({
-        mode: 'edit',
-        groupId: g.groupId,
-        sessionId: s.sessionId,
-        timepointCode: s.timepointCode,
-        shrimpTempC: s.shrimpTempC === null ? '' : String(s.shrimpTempC),
-        shrimpWeightG: s.shrimpWeightG === null ? '' : String(s.shrimpWeightG),
+    // Ikon pensil di tabel riwayat: koreksi data observasi satu tahap.
+    // Input type=number memakai titik desimal, jadi prefill tanpa konversi.
+    setSessionModal({
+      mode: 'edit',
+      groupId: g.groupId,
+      sessionId: s.sessionId,
+      timepointCode: s.timepointCode,
+      durationMinutes: s.durationSeconds ? Math.round(s.durationSeconds / 60) : 15,
+      shrimpTempC: s.shrimpTempC === null ? '' : String(s.shrimpTempC),
+      shrimpWeightG: s.shrimpWeightG === null ? '' : String(s.shrimpWeightG),
       photos: [],
       photoPreviews: [],
       photoCaptions: [],
@@ -485,6 +505,7 @@ export default function BatchDetailPage() {
       groupId,
       sessionId,
       timepointCode,
+      durationMinutes,
       shrimpTempC,
       shrimpWeightG,
       photos,
@@ -494,6 +515,11 @@ export default function BatchDetailPage() {
       setSessionModal((m) => (m ? { ...m, err: msg, busy: false } : null));
     const tempOk = shrimpTempC.trim() === '' || Number.isFinite(Number(shrimpTempC));
     const weightOk = shrimpWeightG.trim() === '' || Number.isFinite(Number(shrimpWeightG));
+    const durationOk = Number.isFinite(durationMinutes) && durationMinutes >= 1 && durationMinutes <= 120;
+    if (!durationOk) {
+      fail('Durasi pengujian harus antara 1 sampai 120 menit.');
+      return;
+    }
     if (!tempOk || !weightOk) {
       fail('Suhu dan berat harus angka yang sah (atau dikosongkan).');
       return;
@@ -530,10 +556,12 @@ export default function BatchDetailPage() {
         const targetGroup = batch?.sampleGroups.find((grp) => grp.groupId === groupId);
         const chamberId =
           targetGroup?.coldStorageMode === 'plain_fridge' ? null : chSel[groupId] || null;
+        const durationSeconds = Math.round(durationMinutes * 60);
         const created = await callJson(`/api/v1/groups/${encodeURIComponent(groupId)}/sessions`, {
           timepointCode,
           warmupDone: true,
           chamberId,
+          durationSeconds,
           ...shrimpFields,
         }) as { sessionId?: string };
         createdSessionId = created?.sessionId;
@@ -556,16 +584,20 @@ export default function BatchDetailPage() {
         }
       }
       setSessionModal(null);
-      notify(mode === 'edit' ? `Data tahap ${timepointCode} berhasil diperbarui.` : `Sesi ${timepointCode} berhasil dimulai.`);
+      notify(mode === 'edit' ? `Data tahap ${timepointCode} berhasil diperbarui.` : `Sesi ${timepointCode} berhasil dimulai (${durationMinutes} menit).`);
       refresh();
     } catch (err) {
       setSessionModal((m) => (m ? { ...m, err: err instanceof Error ? err.message : 'Gagal menyimpan', busy: false } : null));
     }
   };
 
-  const handleComplete = async (s: SessionItem) => {
-    if (!cleaning[s.sessionId]) {
+  const handleComplete = async (s: SessionItem, isAuto = false) => {
+    if (completingRef.current.has(s.sessionId)) return;
+    completingRef.current.add(s.sessionId);
+
+    if (!isAuto && !cleaning[s.sessionId]) {
       setError('Bersihkan chamber alkohol 70% dulu (centang cleaning) sebelum complete');
+      completingRef.current.delete(s.sessionId);
       return;
     }
     setBusy(true);
@@ -574,14 +606,36 @@ export default function BatchDetailPage() {
       await callJson(`/api/v1/sessions/${encodeURIComponent(s.sessionId)}/complete`, {
         cleaningDone: true,
       });
-      notify(`Sesi ${s.timepointCode} berhasil diselesaikan.`);
+      notify(isAuto ? `Pengujian ${s.timepointCode} telah selesai. Data berhasil direkam.` : `Sesi ${s.timepointCode} berhasil diselesaikan.`);
+      setResultModalSessionId(s.sessionId);
       refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal complete sesi');
     } finally {
       setBusy(false);
+      completingRef.current.delete(s.sessionId);
     }
   };
+
+  const handleCompleteRef = React.useRef(handleComplete);
+  handleCompleteRef.current = handleComplete;
+
+  // Monitor auto-complete saat countdown mencapai batas durasi
+  useEffect(() => {
+    if (!batch || !!batch.lockedAt) return;
+    for (const g of batch.sampleGroups) {
+      for (const s of g.sessions) {
+        if (s.status === 'open' && s.startedAtUtc) {
+          const startedMs = new Date(s.startedAtUtc).getTime();
+          const targetSeconds = s.durationSeconds ?? (durationMins[g.groupId] ? durationMins[g.groupId] * 60 : 900);
+          const elapsedSeconds = Math.floor((nowMs - startedMs) / 1000);
+          if (elapsedSeconds >= targetSeconds) {
+            void handleCompleteRef.current(s, true);
+          }
+        }
+      }
+    }
+  }, [nowMs, batch, durationMins]);
 
   /** Pilih foto: tambah ke yang sudah ada (bukan mengganti). */
   const handlePhotoSelect = (list: FileList | null, input: HTMLInputElement) => {
@@ -1629,18 +1683,34 @@ export default function BatchDetailPage() {
                               <span className="font-bold text-white">{s.timepointCode}</span>
                               <span className="text-white/45"> ({s.elapsedHours} jam)</span>
                             </div>
-                            <span
-                              className={`text-[10px] px-1.5 py-0.5 rounded border uppercase font-mono ${
-                                s.status === 'open'
-                                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
-                                  : s.status === 'complete'
+                            {s.status === 'open' ? (
+                              (() => {
+                                const startedMs = s.startedAtUtc ? new Date(s.startedAtUtc).getTime() : 0;
+                                const targetSec = s.durationSeconds ?? (durationMins[g.groupId] ? durationMins[g.groupId] * 60 : 900);
+                                const elapsedSec = startedMs > 0 ? Math.max(0, Math.floor((nowMs - startedMs) / 1000)) : 0;
+                                const remSec = Math.max(0, targetSec - elapsedSec);
+                                const remM = Math.floor(remSec / 60);
+                                const remS = remSec % 60;
+                                const timeStr = `${remM.toString().padStart(2, '0')}:${remS.toString().padStart(2, '0')}`;
+                                return (
+                                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 animate-pulse font-mono">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                                    RECORDING {timeStr}
+                                  </span>
+                                );
+                              })()
+                            ) : (
+                              <span
+                                className={`text-[10px] px-1.5 py-0.5 rounded border uppercase font-mono ${
+                                  s.status === 'complete'
                                     ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
                                     : 'bg-white/10 text-white/60 border-white/20'
-                              }`}
-                              title={s.status === 'incomplete' ? 'Selesai tanpa data tertaut — bisa diulang' : undefined}
-                            >
-                              {s.status}
-                            </span>
+                                }`}
+                                title={s.status === 'incomplete' ? 'Selesai tanpa data tertaut — bisa diulang' : undefined}
+                              >
+                                {s.status}
+                              </span>
+                            )}
                             {s.chamberId && (
                               <div className="text-[10px] font-mono text-white/40 mt-0.5">
                                 Chamber: {chamberName(s.chamberId)}
@@ -1677,6 +1747,16 @@ export default function BatchDetailPage() {
                           </td>
                           <td className="px-3 py-2">
                             <div className="flex flex-col items-start gap-1.5">
+                              {s.status === 'complete' && (
+                                <button
+                                  type="button"
+                                  onClick={() => setResultModalSessionId(s.sessionId)}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-semibold font-mono transition-all"
+                                  title="Lihat grafik sensor dan hasil pengujian"
+                                >
+                                  <span>📈</span> Hasil
+                                </button>
+                              )}
                               {editable ? (
                                 <button
                                   type="button"
@@ -1718,7 +1798,7 @@ export default function BatchDetailPage() {
                                   <RepeatIcon className="w-4 h-4" aria-hidden="true" />
                                 </button>
                               )}
-                              {!editable && !runable && !reopnable ? (
+                              {!editable && !runable && !reopnable && s.status !== 'complete' ? (
                                 <span className="text-white/30 font-mono text-xs">—</span>
                               ) : null}
                             </div>
@@ -1779,6 +1859,28 @@ export default function BatchDetailPage() {
                     </span>
                   </>
                 )}
+                <div className="flex items-center gap-1.5">
+                  <label htmlFor={`dur-${g.groupId}`} className="text-[11px] font-mono text-white/60">
+                    Durasi:
+                  </label>
+                  <div className="flex items-center">
+                    <input
+                      id={`dur-${g.groupId}`}
+                      type="number"
+                      min={1}
+                      max={120}
+                      value={durationMins[g.groupId] ?? 15}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setDurationMins({ ...durationMins, [g.groupId]: val });
+                      }}
+                      className="w-16 px-2 py-1.5 rounded-l-xl bg-black/25 border border-white/10 text-xs font-mono text-white text-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
+                    />
+                    <span className="px-2 py-1.5 rounded-r-xl bg-white/10 border-y border-r border-white/10 text-[11px] font-mono text-white/60">
+                      mnt
+                    </span>
+                  </div>
+                </div>
                 <label className="flex items-center gap-1.5 text-[11px] font-mono text-white/70 cursor-pointer">
                   <input
                     type="checkbox"
@@ -1834,6 +1936,30 @@ export default function BatchDetailPage() {
               </p>
             )}
             <div className="space-y-3">
+              {sessionModal.mode === 'create' && (
+                <div>
+                  <label htmlFor="pre-dur" className="block text-[12px] font-mono text-white/75 mb-1">
+                    Durasi pengujian (menit)
+                  </label>
+                  <input
+                    id="pre-dur"
+                    type="number"
+                    min="1"
+                    max="120"
+                    aria-label="Durasi pengujian sensor dalam menit (1 - 120 menit)"
+                    value={sessionModal.durationMinutes}
+                    onChange={(e) =>
+                      setSessionModal((m) =>
+                        m ? { ...m, durationMinutes: Math.max(1, Math.min(120, Number(e.target.value) || 15)) } : null
+                      )
+                    }
+                    className="w-full px-3 py-2.5 rounded-xl bg-black/25 border border-white/10 text-white text-sm font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
+                  />
+                  <p className="text-[11px] font-mono text-white/45 mt-1">
+                    Default 15 menit. Grafik hasil pengujian sensor akan otomatis ditampilkan saat pengujian selesai.
+                  </p>
+                </div>
+              )}
               <div>
                 <label htmlFor="pre-temp" className="block text-[12px] font-mono text-white/75 mb-1">
                   Suhu udang (°C)
@@ -2016,6 +2142,16 @@ export default function BatchDetailPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal Hasil Pengujian Sensor (Grafik MQ & DHT-22) */}
+      {resultModalSessionId && (
+        <SessionResultModal
+          key={resultModalSessionId}
+          sessionId={resultModalSessionId}
+          isOpen={!!resultModalSessionId}
+          onClose={() => setResultModalSessionId(null)}
+        />
       )}
     </div>
   );

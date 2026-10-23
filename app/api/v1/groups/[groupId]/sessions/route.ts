@@ -102,6 +102,14 @@ export async function POST(
       ? null
       : parsePositiveNumber(body.shrimpWeightG, 'shrimpWeightG', 2000);
 
+    let durationSeconds: number = 900;
+    if (body?.durationSeconds !== undefined && body?.durationSeconds !== null) {
+      if (typeof body.durationSeconds !== 'number' || !Number.isInteger(body.durationSeconds) || body.durationSeconds < 60 || body.durationSeconds > 7200) {
+        throw validationError('Field "durationSeconds" harus antara 60 (1 menit) sampai 7200 (120 menit)');
+      }
+      durationSeconds = body.durationSeconds;
+    }
+
     const suffix = group.storageCondition === 'COLD' ? 'SD' : 'SR';
     const session = await prisma.measurementSession.create({
       data: {
@@ -113,6 +121,7 @@ export async function POST(
         timepointCode,
         elapsedHours: timepointToElapsedHours(timepointCode),
         startedAtUtc,
+        durationSeconds,
         warmupDone: true,
         shrimpTempC,
         shrimpWeightG,

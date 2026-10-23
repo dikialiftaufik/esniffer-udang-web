@@ -296,6 +296,7 @@ type DbSession = {
   elapsedHours: number;
   startedAtUtc: Date;
   endedAtUtc: Date | null;
+  durationSeconds: number | null;
   baselineMq137: { toNumber(): number } | null;
   baselineMq136: { toNumber(): number } | null;
   baselineMq4: { toNumber(): number } | null;
@@ -320,6 +321,7 @@ export function serializeSession(s: DbSession) {
     elapsedHours: s.elapsedHours,
     startedAtUtc: s.startedAtUtc.toISOString(),
     endedAtUtc: iso(s.endedAtUtc),
+    durationSeconds: s.durationSeconds ?? null,
     // Data observasi per tahap (migrasi 20261022170000): baris lama = null.
     shrimpTempC: dec(s.shrimpTempC),
     shrimpWeightG: dec(s.shrimpWeightG),

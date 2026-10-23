@@ -340,6 +340,7 @@ model MeasurementSession {
   startedAtUtc  DateTime      @map("started_at_utc") @db.Timestamptz(3)
   // Batas window akuisisi; dipakai backfill Fase 6 agar worker tidak diubah.
   endedAtUtc    DateTime?     @map("ended_at_utc") @db.Timestamptz(3)
+  durationSeconds Int?        @map("duration_seconds")
   baselineMq137 Decimal?      @map("baseline_mq137") @db.Decimal(14, 3)
   baselineMq136 Decimal?      @map("baseline_mq136") @db.Decimal(14, 3)
   baselineMq4   Decimal?      @map("baseline_mq4") @db.Decimal(14, 3)
