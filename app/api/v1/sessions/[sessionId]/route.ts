@@ -65,3 +65,66 @@ export async function PATCH(
     return errorResponse(err, requestId, request);
   }
 }
+
+/**
+ * Hapus sesi pengujian / tahap observasi:
+ * - Melepas relasi sensor_reading (set sessionId, batchId, timepointCode, isBaseline = null)
+ * - Menghapus foto batch khusus sesi ini
+ * - Menghapus baris measurementSession
+ * Batch terkunci ditolak 409.
+ */
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ sessionId: string }> }
+): Promise<Response> {
+  const requestId = getRequestId(request);
+
+  try {
+    verifyCsrfAndOrigin(request);
+    await requireAuth(request, ['ADMIN']);
+    const { sessionId } = await context.params;
+
+    const session = await prisma.measurementSession.findUnique({
+      where: { sessionId },
+      include: { batch: { select: { lockedAt: true, batchId: true } } },
+    });
+    if (!session) {
+      throw notFound(`Session "${sessionId}" not found`);
+    }
+    if (session.batch.lockedAt) {
+      throw conflict(`Batch "${session.batch.batchId}" sudah terkunci dan tidak bisa diubah`);
+    }
+    if (session.status === 'LOCKED') {
+      throw conflict(`Sesi "${sessionId}" sudah terkunci`);
+    }
+
+    // 1. Lepas relasi sensor reading agar tidak tertahan oleh onDelete: Restrict
+    await prisma.sensorReading.updateMany({
+      where: { sessionId: session.id },
+      data: {
+        sessionId: null,
+        batchId: null,
+        timepointCode: null,
+        isBaseline: null,
+      },
+    });
+
+    // 2. Hapus foto yang diunggah khusus untuk sesi ini
+    await prisma.batchPhoto.deleteMany({
+      where: { sessionId: session.sessionId },
+    });
+
+    // 3. Hapus sesi pengukuran
+    await prisma.measurementSession.delete({
+      where: { sessionId },
+    });
+
+    return jsonResponse({
+      deleted: true,
+      sessionId: session.sessionId,
+      timepointCode: session.timepointCode,
+    });
+  } catch (err) {
+    return errorResponse(err, requestId, request);
+  }
+}

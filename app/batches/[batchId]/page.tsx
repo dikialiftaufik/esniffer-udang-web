@@ -275,6 +275,15 @@ export default function BatchDetailPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   // Durasi pengujian per group (dalam menit, default 15 menit)
   const [durationMins, setDurationMins] = useState<Record<string, number>>({});
+  // Input timepoint kustom per grup
+  const [customTp, setCustomTp] = useState<Record<string, string>>({});
+  // Konfirmasi hapus tahap pengujian
+  const [confirmDeleteSession, setConfirmDeleteSession] = useState<{
+    sessionId: string;
+    timepointCode: string;
+    tahap: number;
+  } | null>(null);
+  const [deletingSession, setDeletingSession] = useState(false);
   // Sesi yang sedang dibuka modal grafiknya
   const [resultModalSessionId, setResultModalSessionId] = useState<string | null>(null);
   const completingRef = React.useRef<Set<string>>(new Set());
@@ -445,11 +454,31 @@ export default function BatchDetailPage() {
   const suggestNext = (g: GroupItem): string => {
     const seq = g.storageCondition === 'cold' ? SD_TIMEPOINTS : SR_TIMEPOINTS;
     const used = usedCodes(g);
-    return seq.find((t) => !used.has(t)) ?? seq[seq.length - 1];
+    const nextInSeq = seq.find((t) => !used.has(t));
+    if (nextInSeq) return nextInSeq;
+    const sorted = [...g.sessions].sort((a, b) => b.elapsedHours - a.elapsedHours);
+    if (sorted.length === 0) return 'H0';
+    if (g.storageCondition === 'cold') {
+      const days = Math.floor(sorted[0].elapsedHours / 24) + 1;
+      return `D${days}`;
+    }
+    return `H${sorted[0].elapsedHours + 6}`;
   };
 
   const handleCreateSession = async (g: GroupItem) => {
-    const timepointCode = tpSel[g.groupId] || suggestNext(g);
+    let timepointCode = tpSel[g.groupId] || suggestNext(g);
+    if (timepointCode === 'CUSTOM') {
+      timepointCode = (customTp[g.groupId] || '').trim().toUpperCase();
+      if (!/^(H|D)[0-9]+$/.test(timepointCode)) {
+        setError('Format timepoint kustom harus diawali H (jam) atau D (hari) diikuti angka, misal H3 atau D15');
+        return;
+      }
+    }
+    const used = usedCodes(g);
+    if (used.has(timepointCode)) {
+      setError(`Timepoint ${timepointCode} sudah digunakan dalam grup ini. Gunakan kode timepoint yang lain.`);
+      return;
+    }
     if (!warmup[g.groupId]) {
       setError('Nyalakan sensor 30 menit dulu (centang warmup) sebelum Start sesi');
       return;
@@ -471,6 +500,27 @@ export default function BatchDetailPage() {
     });
   };
 
+  const handleDeleteSession = async (sessionId: string) => {
+    setDeletingSession(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
+        method: 'DELETE',
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error?.message || `Gagal menghapus tahap (kode ${res.status}).`);
+      }
+      notify(`Tahap ${confirmDeleteSession?.timepointCode ?? ''} berhasil dihapus.`);
+      setConfirmDeleteSession(null);
+      refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal menghapus tahap pengujian');
+    } finally {
+      setDeletingSession(false);
+    }
+  };
+
   const openSessionEdit = (g: GroupItem, s: SessionItem) => {
     // Ikon pensil di tabel riwayat: koreksi data observasi satu tahap.
     // Input type=number memakai titik desimal, jadi prefill tanpa konversi.
@@ -490,11 +540,13 @@ export default function BatchDetailPage() {
     });
   };
 
-  /** Nomor tahap = posisi timepoint di jadwal grup +1 (H0→1, H6 SR→2, D1 SD→2). */
+  /** Nomor tahap dinamis = posisi timepoint urut di tabel. */
   const tahapOf = (g: GroupItem, timepointCode: string): number => {
+    const idx = g.sessions.findIndex((s) => s.timepointCode === timepointCode);
+    if (idx >= 0) return idx + 1;
     const seq = g.storageCondition === 'cold' ? SD_TIMEPOINTS : SR_TIMEPOINTS;
     const i = seq.indexOf(timepointCode);
-    return i < 0 ? 0 : i + 1;
+    return i >= 0 ? i + 1 : g.sessions.length + 1;
   };
 
   // Handler submit modal tahap: simpan suhu/berat (+foto) lalu buat/tandai sesi.
@@ -1669,8 +1721,8 @@ export default function BatchDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {g.sessions.map((s) => {
-                      const tahap = tahapOf(g, s.timepointCode);
+                    {g.sessions.map((s, idx) => {
+                      const tahap = idx + 1;
                       const fotoTahap = batch.photos.filter((p) => p.sessionId === s.sessionId);
                       const runable = isAdmin && !locked && s.status === 'open';
                       const reopnable = isAdmin && !locked && s.status === 'incomplete';
@@ -1747,27 +1799,52 @@ export default function BatchDetailPage() {
                           </td>
                           <td className="px-3 py-2">
                             <div className="flex flex-col items-start gap-1.5">
-                              {s.status === 'complete' && (
-                                <button
-                                  type="button"
-                                  onClick={() => setResultModalSessionId(s.sessionId)}
-                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-semibold font-mono transition-all"
-                                  title="Lihat grafik sensor dan hasil pengujian"
-                                >
-                                  <span>📈</span> Hasil
-                                </button>
-                              )}
-                              {editable ? (
-                                <button
-                                  type="button"
-                                  onClick={() => openSessionEdit(g, s)}
-                                  className={btnAksi}
-                                  aria-label={`Edit data tahap ${tahap} (${s.timepointCode})`}
-                                  title="Edit suhu, berat, dan foto tahap ini"
-                                >
-                                  <PencilIcon className="w-4 h-4" aria-hidden="true" />
-                                </button>
-                              ) : null}
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {s.status === 'complete' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setResultModalSessionId(s.sessionId)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-semibold font-mono transition-all"
+                                    title="Lihat grafik sensor dan hasil pengujian"
+                                  >
+                                    <span>📈</span> Hasil
+                                  </button>
+                                )}
+                                {editable && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openSessionEdit(g, s)}
+                                    className={btnAksi}
+                                    aria-label={`Edit data tahap ${tahap} (${s.timepointCode})`}
+                                    title="Edit suhu, berat, dan foto tahap ini"
+                                  >
+                                    <PencilIcon className="w-4 h-4" aria-hidden="true" />
+                                  </button>
+                                )}
+                                {reopnable && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleReopen(s)}
+                                    className={btnAksi}
+                                    aria-label={`Ulangi tahap ${tahap} (${s.timepointCode})`}
+                                    title="Buka ulang sesi untuk mengukur ulang timepoint ini"
+                                  >
+                                    <RepeatIcon className="w-4 h-4" aria-hidden="true" />
+                                  </button>
+                                )}
+                                {editable && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteSession({ sessionId: s.sessionId, timepointCode: s.timepointCode, tahap })}
+                                    disabled={busy || deletingSession}
+                                    className={`${btnAksi} text-rose-300 hover:text-rose-200 hover:bg-rose-500/20 border-rose-500/30 flex items-center justify-center`}
+                                    aria-label={`Hapus tahap ${tahap} (${s.timepointCode})`}
+                                    title="Hapus tahap pengujian ini"
+                                  >
+                                    <span className="text-sm leading-none" aria-hidden="true">🗑️</span>
+                                  </button>
+                                )}
+                              </div>
                               {runable && (
                                 <label className="flex items-center gap-1.5 text-[10px] font-mono text-white/70 cursor-pointer">
                                   <input
@@ -1778,6 +1855,7 @@ export default function BatchDetailPage() {
                                   />
                                   Cleaning 70%
                                   <button
+                                    type="button"
                                     onClick={() => void handleComplete(s)}
                                     disabled={busy || !cleaning[s.sessionId]}
                                     className="px-2 py-1 rounded-lg bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-400/40 text-emerald-100 text-[10px] font-mono font-bold disabled:opacity-50"
@@ -1786,17 +1864,6 @@ export default function BatchDetailPage() {
                                     Complete
                                   </button>
                                 </label>
-                              )}
-                              {reopnable && (
-                                <button
-                                  type="button"
-                                  onClick={() => void handleReopen(s)}
-                                  className={btnAksi}
-                                  aria-label={`Ulangi tahap ${tahap} (${s.timepointCode})`}
-                                  title="Buka ulang sesi untuk mengukur ulang timepoint ini"
-                                >
-                                  <RepeatIcon className="w-4 h-4" aria-hidden="true" />
-                                </button>
                               )}
                               {!editable && !runable && !reopnable && s.status !== 'complete' ? (
                                 <span className="text-white/30 font-mono text-xs">—</span>
@@ -1813,20 +1880,48 @@ export default function BatchDetailPage() {
             {g.sessions.length === 0 && (
               <p className="text-xs font-mono text-white/50">Belum ada sesi observasi. Pilih timepoint di bawah lalu mulai sesi pertama.</p>
             )}
-            {isAdmin && !locked && available.length > 0 && (
+            {isAdmin && !locked && (
               <div className="flex flex-wrap items-center gap-2 pt-1">
-                <select
-                  value={tpSel[g.groupId] || suggestNext(g)}
-                  onChange={(e) => setTpSel({ ...tpSel, [g.groupId]: e.target.value })}
-                  aria-label="Timepoint sesi baru"
-                  className="px-3 py-2 rounded-xl bg-black/25 border border-white/10 text-xs font-mono text-white"
-                >
-                  {available.map((t) => (
-                    <option key={t} value={t} className="bg-slate-900">
-                      {t}
-                    </option>
-                  ))}
-                </select>
+                {(() => {
+                  const nextSuggested = suggestNext(g);
+                  const options = [...available];
+                  if (nextSuggested && !options.includes(nextSuggested)) {
+                    options.push(nextSuggested);
+                  }
+                  const currentSel = tpSel[g.groupId] || (options.length > 0 ? options[0] : 'CUSTOM');
+                  const isCustom = currentSel === 'CUSTOM';
+
+                  return (
+                    <>
+                      <select
+                        value={currentSel}
+                        onChange={(e) => setTpSel({ ...tpSel, [g.groupId]: e.target.value })}
+                        aria-label="Timepoint sesi baru"
+                        className="px-3 py-2 rounded-xl bg-black/25 border border-white/10 text-xs font-mono text-white"
+                      >
+                        {options.map((t) => (
+                          <option key={t} value={t} className="bg-slate-900">
+                            {t}
+                          </option>
+                        ))}
+                        <option value="CUSTOM" className="bg-slate-900 text-cyan-300 font-bold">
+                          + Kustom (H... / D...)
+                        </option>
+                      </select>
+                      {isCustom && (
+                        <input
+                          type="text"
+                          value={customTp[g.groupId] || ''}
+                          onChange={(e) => setCustomTp({ ...customTp, [g.groupId]: e.target.value.toUpperCase() })}
+                          placeholder="Misal H3 / D15"
+                          maxLength={8}
+                          aria-label="Input kode timepoint kustom"
+                          className="w-28 px-3 py-2 rounded-xl bg-black/35 border border-cyan-400/50 text-xs font-mono text-cyan-200 placeholder:text-white/30 uppercase focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
+                        />
+                      )}
+                    </>
+                  );
+                })()}
                 {g.coldStorageMode === 'plain_fridge' ? (
                   // Butir 1: grup "langsung di kulkas" tidak memakai chamber,
                   // jadi pemilih chamber disembunyikan.
@@ -2153,6 +2248,21 @@ export default function BatchDetailPage() {
           onClose={() => setResultModalSessionId(null)}
         />
       )}
+
+      {/* Dialog Konfirmasi Hapus Tahap Pengujian */}
+      <ConfirmDialog
+        open={confirmDeleteSession !== null}
+        title={`Hapus Tahap ${confirmDeleteSession?.tahap ?? ''} (${confirmDeleteSession?.timepointCode ?? ''})?`}
+        message={`Apakah Anda yakin ingin menghapus data tahap ${confirmDeleteSession?.timepointCode ?? ''}? Seluruh data observasi (suhu, berat), grafik sensor, dan foto pada tahap ini akan dihapus permanen.`}
+        confirmLabel={deletingSession ? 'Menghapus…' : 'Ya, hapus tahap'}
+        busy={deletingSession}
+        onConfirm={() => {
+          if (confirmDeleteSession) {
+            void handleDeleteSession(confirmDeleteSession.sessionId);
+          }
+        }}
+        onCancel={() => setConfirmDeleteSession(null)}
+      />
     </div>
   );
 }
