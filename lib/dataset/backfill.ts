@@ -20,9 +20,55 @@ export interface BackfillResult {
  * ditautkan), INCOMPLETE bila chamber/device ada tapi window kosong.
  */
 export async function backfillSessionReadings(sessionId: string): Promise<BackfillResult> {
-  const session = await prisma.measurementSession.findUniqueOrThrow({ where: { id: sessionId } });
+  let session = await prisma.measurementSession.findUniqueOrThrow({ where: { id: sessionId } });
 
-  if (!session.chamberId || !session.deviceId || !session.endedAtUtc) {
+  if (!session.chamberId || !session.endedAtUtc) {
+    await prisma.measurementSession.update({
+      where: { id: sessionId },
+      data: { status: 'COMPLETE' },
+    });
+    return { linked: 0, baseline: 0, skipped: true };
+  }
+
+  // Jika deviceId belum terpasang, coba cari dari DeviceAssignment atau pembacaan sensor pada chamber
+  let deviceId = session.deviceId;
+  if (!deviceId && session.chamberId) {
+    const assignment = await prisma.deviceAssignment.findFirst({
+      where: {
+        chamberId: session.chamberId,
+        activeFrom: { lte: session.endedAtUtc },
+        OR: [
+          { activeUntil: null },
+          { activeUntil: { gte: session.startedAtUtc } },
+        ],
+      },
+      orderBy: { activeFrom: 'desc' },
+    });
+    if (assignment) {
+      deviceId = assignment.deviceId;
+    } else {
+      const sampleReading = await prisma.sensorReading.findFirst({
+        where: {
+          chamberId: session.chamberId,
+          measuredAt: { gte: session.startedAtUtc, lte: session.endedAtUtc },
+        },
+        select: { deviceId: true },
+      });
+      if (sampleReading) {
+        deviceId = sampleReading.deviceId;
+      }
+    }
+
+    if (deviceId) {
+      await prisma.measurementSession.update({
+        where: { id: sessionId },
+        data: { deviceId },
+      });
+      session = await prisma.measurementSession.findUniqueOrThrow({ where: { id: sessionId } });
+    }
+  }
+
+  if (!session.deviceId) {
     await prisma.measurementSession.update({
       where: { id: sessionId },
       data: { status: 'COMPLETE' },
@@ -52,6 +98,7 @@ export async function backfillSessionReadings(sessionId: string): Promise<Backfi
     _count: { _all: true },
   });
   const baseline = grouped.find((g) => g.isBaseline === true)?._count._all ?? 0;
+  const total = grouped.reduce((sum, g) => sum + g._count._all, 0);
 
   // Rata-rata baseline otomatis dari row is_baseline (diabaikan bila tak ada):
   // inilah yang mengisi kolom baseline_mq137/136/4 di export metadata.
@@ -63,7 +110,7 @@ export async function backfillSessionReadings(sessionId: string): Promise<Backfi
   await prisma.measurementSession.update({
     where: { id: sessionId },
     data: {
-      status: linked === 0 && baseline === 0 ? 'INCOMPLETE' : 'COMPLETE',
+      status: total === 0 ? 'INCOMPLETE' : 'COMPLETE',
       baselineMq137: stats._avg.mq137Raw ?? undefined,
       baselineMq136: stats._avg.mq136Raw ?? undefined,
       baselineMq4: stats._avg.mq4Raw ?? undefined,

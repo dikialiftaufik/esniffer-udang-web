@@ -37,11 +37,11 @@ export async function GET(
       where: {
         OR: [
           { sessionId: session.id },
-          ...(session.endedAtUtc && session.chamberId && session.deviceId
+          ...(session.endedAtUtc && session.chamberId
             ? [
                 {
                   chamberId: session.chamberId,
-                  deviceId: session.deviceId,
+                  ...(session.deviceId ? { deviceId: session.deviceId } : {}),
                   measuredAt: {
                     gte: session.startedAtUtc,
                     lte: session.endedAtUtc,

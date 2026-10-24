@@ -164,6 +164,36 @@ describe('HTTP API v1: PATCH batch + PATCH sesi + foto per sesi (revisi tabel ri
     assert.strictEqual(res.status, 422);
   });
 
+  it('1b. POST sesi dengan rentang waktu masa lalu (autoBackfill) otomatis selesai dan mengembalikan data', async () => {
+    const res = await createSession(
+      new Request(`http://localhost:3000/api/v1/groups/${groupSr}/sessions`, {
+        method: 'POST',
+        headers: jsonHeaders(adminCookie),
+        body: JSON.stringify({
+          timepointCode: 'H6',
+          startedAtUtc: '2026-10-24T01:30:00.000Z',
+          endedAtUtc: '2026-10-24T01:45:00.000Z',
+          durationSeconds: 900,
+          autoBackfill: true,
+          shrimpTempC: 5.5,
+          shrimpWeightG: 480.0,
+        }),
+      }),
+      { params: Promise.resolve({ groupId: groupSr }) }
+    );
+    assert.strictEqual(res.status, 201);
+    const body = await res.json();
+    assert.strictEqual(body.data.timepointCode, 'H6');
+    assert.strictEqual(body.data.durationSeconds, 900);
+    assert.strictEqual(body.data.status, 'complete');
+    assert.strictEqual(body.data.cleaningDone, true);
+    assert.strictEqual(body.data.warmupDone, true);
+    assert.strictEqual(body.data.shrimpTempC, 5.5);
+    assert.strictEqual(body.data.shrimpWeightG, 480.0);
+    assert.ok(body.meta);
+    assert.strictEqual(typeof body.meta.linkedReadings, 'number');
+  });
+
   it('2. PATCH /sessions/:id memperbarui dan mengosongkan suhu/berat (200)', async () => {
     const update = await patchSession(
       new Request(`http://localhost:3000/api/v1/sessions/${sessionH0}`, {

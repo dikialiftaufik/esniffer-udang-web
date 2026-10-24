@@ -10,6 +10,7 @@ import {
   isNextTimepoint,
 } from '../../../../../../shared/dataset.ts';
 import { serializeSession, parseBoundedNumber, parsePositiveNumber } from '../../../../../../lib/api/dataset.ts';
+import { backfillSessionReadings } from '../../../../../../lib/dataset/backfill.ts';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -51,13 +52,37 @@ export async function POST(
       }
     }
 
-    if (body?.warmupDone !== true) {
-      throw validationError('Nyalakan sensor 30 menit dulu (warmupDone harus true) sebelum Start');
-    }
-
     const startedAtUtc = body?.startedAtUtc === undefined
       ? new Date()
       : parseIsoDate(body.startedAtUtc, 'startedAtUtc', true)!;
+
+    let durationSeconds: number = 900;
+    if (body?.durationSeconds !== undefined && body?.durationSeconds !== null) {
+      if (typeof body.durationSeconds !== 'number' || !Number.isInteger(body.durationSeconds) || body.durationSeconds < 60 || body.durationSeconds > 7200) {
+        throw validationError('Field "durationSeconds" harus antara 60 (1 menit) sampai 7200 (120 menit)');
+      }
+      durationSeconds = body.durationSeconds;
+    }
+
+    let endedAtUtc: Date | null = null;
+    if (body?.endedAtUtc !== undefined && body?.endedAtUtc !== null) {
+      endedAtUtc = parseIsoDate(body.endedAtUtc, 'endedAtUtc', true)!;
+      if (endedAtUtc.getTime() <= startedAtUtc.getTime()) {
+        throw validationError('Waktu selesai harus setelah waktu mulai sesi');
+      }
+      durationSeconds = Math.round((endedAtUtc.getTime() - startedAtUtc.getTime()) / 1000);
+    }
+
+    const isPast = Boolean(endedAtUtc && endedAtUtc.getTime() <= Date.now());
+    const autoBackfill = Boolean(body?.autoBackfill || isPast);
+
+    if (autoBackfill && !endedAtUtc) {
+      endedAtUtc = new Date(startedAtUtc.getTime() + durationSeconds * 1000);
+    }
+
+    if (!autoBackfill && body?.warmupDone !== true) {
+      throw validationError('Nyalakan sensor 30 menit dulu (warmupDone harus true) sebelum Start');
+    }
 
     let chamberId: string | null = null;
     if (body?.chamberId !== undefined && body?.chamberId !== null) {
@@ -69,6 +94,8 @@ export async function POST(
         throw notFound(`Chamber "${body.chamberId}" not found`);
       }
       chamberId = chamber.id;
+    } else if (group.chamberId) {
+      chamberId = group.chamberId;
     }
 
     // Revisi putaran 2 butir 1 (validasi server): grup dingin mode chamber
@@ -90,6 +117,21 @@ export async function POST(
         throw notFound(`Device "${body.deviceId}" not found`);
       }
       deviceId = device.id;
+    } else if (chamberId) {
+      const assignment = await prisma.deviceAssignment.findFirst({
+        where: {
+          chamberId,
+          activeFrom: { lte: endedAtUtc ?? startedAtUtc },
+          OR: [
+            { activeUntil: null },
+            { activeUntil: { gte: startedAtUtc } },
+          ],
+        },
+        orderBy: { activeFrom: 'desc' },
+      });
+      if (assignment) {
+        deviceId = assignment.deviceId;
+      }
     }
 
     // Data observasi tahap ini (modal pra-sesi): suhu udang, berat total
@@ -102,14 +144,6 @@ export async function POST(
       ? null
       : parsePositiveNumber(body.shrimpWeightG, 'shrimpWeightG', 2000);
 
-    let durationSeconds: number = 900;
-    if (body?.durationSeconds !== undefined && body?.durationSeconds !== null) {
-      if (typeof body.durationSeconds !== 'number' || !Number.isInteger(body.durationSeconds) || body.durationSeconds < 60 || body.durationSeconds > 7200) {
-        throw validationError('Field "durationSeconds" harus antara 60 (1 menit) sampai 7200 (120 menit)');
-      }
-      durationSeconds = body.durationSeconds;
-    }
-
     const suffix = group.storageCondition === 'COLD' ? 'SD' : 'SR';
     const session = await prisma.measurementSession.create({
       data: {
@@ -121,12 +155,26 @@ export async function POST(
         timepointCode,
         elapsedHours: timepointToElapsedHours(timepointCode),
         startedAtUtc,
+        endedAtUtc: autoBackfill ? endedAtUtc : null,
         durationSeconds,
         warmupDone: true,
+        cleaningDone: autoBackfill,
+        status: autoBackfill ? 'COMPLETE' : 'OPEN',
         shrimpTempC,
         shrimpWeightG,
       },
     });
+
+    if (autoBackfill) {
+      const backfill = await backfillSessionReadings(session.id);
+      const finalSession = await prisma.measurementSession.findUniqueOrThrow({
+        where: { id: session.id },
+      });
+      return jsonResponse(serializeSession(finalSession), {
+        linkedReadings: backfill.linked,
+        baselineReadings: backfill.baseline,
+      }, 201);
+    }
 
     return jsonResponse(serializeSession(session), undefined, 201);
   } catch (err) {

@@ -295,9 +295,11 @@ export default function BatchDetailPage() {
     return () => clearInterval(timer);
   }, []);
 
-  // Modal form pra-sesi: input suhu berat foto sebelum start sesi.
+  // Modal form pra-sesi: input suhu berat foto sebelum start sesi atau ambil data waktu.
   const [sessionModal, setSessionModal] = useState<{
     mode: 'create' | 'edit';
+    captureMode?: 'live' | 'time_range';
+    startTimeWib?: string;
     groupId: string;
     sessionId?: string;
     timepointCode: string;
@@ -431,7 +433,9 @@ export default function BatchDetailPage() {
     if (!res.ok) {
       throw new Error(body.error?.message || `Gagal menyimpan (kode ${res.status}). Periksa koneksi lalu coba lagi.`);
     }
-    return body.data;
+    return typeof body.data === 'object' && body.data !== null
+      ? { ...body.data, _meta: body.meta }
+      : body.data;
   };
 
   const usedCodes = (g: GroupItem): Set<string> =>
@@ -465,7 +469,7 @@ export default function BatchDetailPage() {
     return `H${sorted[0].elapsedHours + 6}`;
   };
 
-  const handleCreateSession = async (g: GroupItem) => {
+  const handleCreateSession = async (g: GroupItem, captureMode: 'live' | 'time_range' = 'live') => {
     let timepointCode = tpSel[g.groupId] || suggestNext(g);
     if (timepointCode === 'CUSTOM') {
       timepointCode = (customTp[g.groupId] || '').trim().toUpperCase();
@@ -479,7 +483,7 @@ export default function BatchDetailPage() {
       setError(`Timepoint ${timepointCode} sudah digunakan dalam grup ini. Gunakan kode timepoint yang lain.`);
       return;
     }
-    if (!warmup[g.groupId]) {
+    if (captureMode === 'live' && !warmup[g.groupId]) {
       setError('Nyalakan sensor 30 menit dulu (centang warmup) sebelum Start sesi');
       return;
     }
@@ -487,6 +491,8 @@ export default function BatchDetailPage() {
     // Modal form tahap baru: isi suhu/berat/foto dulu, sesi dibuat setelah submit.
     setSessionModal({
       mode: 'create',
+      captureMode,
+      startTimeWib: wibDateTimeLocal(new Date()),
       groupId: g.groupId,
       timepointCode,
       durationMinutes: defaultMins,
@@ -554,6 +560,8 @@ export default function BatchDetailPage() {
     if (!sessionModal) return;
     const {
       mode,
+      captureMode,
+      startTimeWib,
       groupId,
       sessionId,
       timepointCode,
@@ -576,6 +584,30 @@ export default function BatchDetailPage() {
       fail('Suhu dan berat harus angka yang sah (atau dikosongkan).');
       return;
     }
+
+    let startedAtUtc: Date | undefined;
+    let endedAtUtc: Date | undefined;
+    if (mode === 'create' && captureMode === 'time_range') {
+      if (!startTimeWib || startTimeWib.trim() === '') {
+        fail('Waktu mulai pengujian wajib diisi.');
+        return;
+      }
+      const parsed = parseWibInput(startTimeWib);
+      if (!parsed.date || parsed.error) {
+        fail('Format tanggal dan jam mulai (WIB) tidak valid.');
+        return;
+      }
+      startedAtUtc = parsed.date;
+      endedAtUtc = new Date(startedAtUtc.getTime() + durationMinutes * 60_000);
+      if (endedAtUtc.getTime() > Date.now() + 60_000) {
+        fail('Rentang waktu yang dipilih belum selesai (waktu selesai masih di masa depan). Untuk pengujian saat ini, silakan gunakan mode "Rekam Langsung (Live)".');
+        return;
+      }
+    } else if (mode === 'create' && captureMode !== 'time_range' && !warmup[groupId]) {
+      fail('Nyalakan sensor 30 menit dulu (centang warmup) sebelum mulai rekam langsung.');
+      return;
+    }
+
     if (photos.length > 0) {
       const badCaption = photoCaptions.findIndex((c) => c.trim() === '' || c.trim().length > MAX_PHOTO_CAPTION_LENGTH);
       if (badCaption >= 0) {
@@ -592,6 +624,8 @@ export default function BatchDetailPage() {
       if (shrimpWeightG.trim() !== '') shrimpFields.shrimpWeightG = Number(shrimpWeightG);
 
       let createdSessionId: string | undefined;
+      let linkedCount: number | undefined;
+
       if (mode === 'edit') {
         const res = await apiFetch(`/api/v1/sessions/${encodeURIComponent(sessionId ?? '')}`, {
           method: 'PATCH',
@@ -609,14 +643,28 @@ export default function BatchDetailPage() {
         const chamberId =
           targetGroup?.coldStorageMode === 'plain_fridge' ? null : chSel[groupId] || null;
         const durationSeconds = Math.round(durationMinutes * 60);
-        const created = await callJson(`/api/v1/groups/${encodeURIComponent(groupId)}/sessions`, {
+
+        const payload: Record<string, unknown> = {
           timepointCode,
           warmupDone: true,
           chamberId,
           durationSeconds,
           ...shrimpFields,
-        }) as { sessionId?: string };
+        };
+
+        if (captureMode === 'time_range' && startedAtUtc && endedAtUtc) {
+          payload.startedAtUtc = startedAtUtc.toISOString();
+          payload.endedAtUtc = endedAtUtc.toISOString();
+          payload.autoBackfill = true;
+        }
+
+        const created = (await callJson(
+          `/api/v1/groups/${encodeURIComponent(groupId)}/sessions`,
+          payload
+        )) as { sessionId?: string; _meta?: { linkedReadings?: number } };
+
         createdSessionId = created?.sessionId;
+        linkedCount = created?._meta?.linkedReadings;
       }
 
       // 2. Foto tahap terangkai ke sesi ini (caption wajib).
@@ -636,7 +684,20 @@ export default function BatchDetailPage() {
         }
       }
       setSessionModal(null);
-      notify(mode === 'edit' ? `Data tahap ${timepointCode} berhasil diperbarui.` : `Sesi ${timepointCode} berhasil dimulai (${durationMinutes} menit).`);
+      if (mode === 'edit') {
+        notify(`Data tahap ${timepointCode} berhasil diperbarui.`);
+      } else if (captureMode === 'time_range') {
+        if (linkedCount && linkedCount > 0) {
+          notify(`Sesi ${timepointCode} berhasil dibuat dari rentang waktu (${durationMinutes} mnt). Sebanyak ${linkedCount} data sensor berhasil dikaitkan.`);
+        } else {
+          notify(`Sesi ${timepointCode} berhasil dibuat (${durationMinutes} mnt), namun belum ada data sensor yang terekam pada jam tersebut.`);
+        }
+        if (createdSessionId) {
+          setResultModalSessionId(createdSessionId);
+        }
+      } else {
+        notify(`Sesi ${timepointCode} berhasil dimulai (${durationMinutes} menit).`);
+      }
       refresh();
     } catch (err) {
       setSessionModal((m) => (m ? { ...m, err: err instanceof Error ? err.message : 'Gagal menyimpan', busy: false } : null));
@@ -1985,9 +2046,24 @@ export default function BatchDetailPage() {
                   />
                   Warmup 30 mnt
                 </label>
-                <button onClick={() => void handleCreateSession(g)} disabled={busy || !warmup[g.groupId]} className={btnGhost} title={!warmup[g.groupId] ? 'Centang warmup 30 menit dulu' : 'Mulai sesi'}>
-                  Start Sesi
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => void handleCreateSession(g, 'live')}
+                    disabled={busy || !warmup[g.groupId]}
+                    className={btnGhost}
+                    title={!warmup[g.groupId] ? 'Centang warmup 30 menit dulu untuk rekam langsung' : 'Mulai rekam langsung (live countdown)'}
+                  >
+                    Start Sesi (Live)
+                  </button>
+                  <button
+                    onClick={() => void handleCreateSession(g, 'time_range')}
+                    disabled={busy}
+                    className="px-3 py-1.5 rounded-xl border border-cyan-400/40 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 text-xs font-mono font-bold transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                    title="Ambil data telemetri sensor berdasarkan rentang waktu tertentu"
+                  >
+                    ⏱️ Ambil Data Waktu
+                  </button>
+                </div>
                 <p className="w-full text-[11px] font-mono text-white/45">
                   {g.coldStorageMode === 'plain_fridge'
                     ? 'Tanpa chamber: sesi ini sengaja tidak punya data sensor chamber.'
@@ -2025,13 +2101,113 @@ export default function BatchDetailPage() {
                 return modalGroup ? tahapOf(modalGroup, sessionModal.timepointCode) : '';
               })()}
             </h3>
+            {sessionModal.mode === 'create' && (
+              <div className="flex p-1 rounded-xl bg-black/40 border border-white/10 gap-1">
+                <button
+                  type="button"
+                  onClick={() => setSessionModal((m) => (m ? { ...m, captureMode: 'live', err: null } : null))}
+                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-mono font-bold transition-all ${
+                    sessionModal.captureMode !== 'time_range'
+                      ? 'bg-rose-500/25 text-rose-200 border border-rose-400/40 shadow-sm'
+                      : 'text-white/60 hover:text-white/90'
+                  }`}
+                >
+                  🔴 Rekam Langsung (Live)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSessionModal((m) => (m ? { ...m, captureMode: 'time_range', err: null } : null))}
+                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-mono font-bold transition-all ${
+                    sessionModal.captureMode === 'time_range'
+                      ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40 shadow-sm'
+                      : 'text-white/60 hover:text-white/90'
+                  }`}
+                >
+                  ⏱️ Rentang Waktu (Jam Tertentu)
+                </button>
+              </div>
+            )}
             {sessionModal.err && (
               <p role="alert" className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs font-mono">
                 {sessionModal.err}
               </p>
             )}
             <div className="space-y-3">
-              {sessionModal.mode === 'create' && (
+              {sessionModal.mode === 'create' && sessionModal.captureMode === 'time_range' ? (
+                <div className="space-y-3 p-3.5 rounded-xl bg-cyan-950/30 border border-cyan-500/25">
+                  <div>
+                    <label htmlFor="pre-start-time" className="block text-[12px] font-mono text-cyan-200 font-semibold mb-1">
+                      Waktu Mulai Pengujian (WIB)
+                    </label>
+                    <input
+                      id="pre-start-time"
+                      type="datetime-local"
+                      value={sessionModal.startTimeWib ?? ''}
+                      onChange={(e) =>
+                        setSessionModal((m) => (m ? { ...m, startTimeWib: e.target.value } : null))
+                      }
+                      className="w-full px-3 py-2 rounded-xl bg-black/30 border border-cyan-400/30 text-white text-sm font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                    />
+                    <p className="text-[11px] font-mono text-cyan-200/60 mt-1">
+                      Format WIB (UTC+7). Masukkan tanggal dan jam mulai pengambilan data sensor.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label htmlFor="pre-dur-range" className="block text-[12px] font-mono text-cyan-200 font-semibold mb-1">
+                      Periode / Durasi Pengujian (menit)
+                    </label>
+                    <input
+                      id="pre-dur-range"
+                      type="number"
+                      min="1"
+                      max="120"
+                      value={sessionModal.durationMinutes}
+                      onChange={(e) =>
+                        setSessionModal((m) =>
+                          m ? { ...m, durationMinutes: Math.max(1, Math.min(120, Number(e.target.value) || 15)) } : null
+                        )
+                      }
+                      className="w-full px-3 py-2 rounded-xl bg-black/30 border border-cyan-400/30 text-white text-sm font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                    />
+                    <p className="text-[11px] font-mono text-cyan-200/60 mt-1">
+                      Default 15 menit (1 s/d 120 menit).
+                    </p>
+                  </div>
+
+                  {/* Info Box Ringkasan Rentang Waktu */}
+                  {(() => {
+                    const parsed = parseWibInput(sessionModal.startTimeWib ?? '');
+                    if (!parsed.date) return null;
+                    const end = new Date(parsed.date.getTime() + sessionModal.durationMinutes * 60_000);
+                    const startWibStr = dtFmt.format(parsed.date);
+                    const endHourStr = new Intl.DateTimeFormat('id-ID', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      timeZone: 'Asia/Jakarta',
+                    }).format(end);
+
+                    const grp = batch.sampleGroups.find((g) => g.groupId === sessionModal.groupId);
+                    const chamberCode = grp?.coldStorageMode === 'plain_fridge'
+                      ? 'Tanpa Chamber (Kulkas)'
+                      : (chSel[sessionModal.groupId] ? chamberName(chSel[sessionModal.groupId]) : 'Chamber Belum Dipilih');
+
+                    return (
+                      <div className="p-2.5 rounded-lg bg-black/40 border border-white/10 text-[11px] font-mono space-y-1">
+                        <p className="text-white/80">
+                          <span className="text-cyan-300 font-semibold">Rentang Waktu:</span> {startWibStr} – {endHourStr} WIB ({sessionModal.durationMinutes} menit)
+                        </p>
+                        <p className="text-white/60">
+                          <span className="text-white/80 font-semibold">Target Chamber:</span> {chamberCode}
+                        </p>
+                        <p className="text-white/50 text-[10px]">
+                          Data sensor pada rentang waktu ini akan otomatis diambil dan dikaitkan ke tahap pengujian ini.
+                        </p>
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : sessionModal.mode === 'create' ? (
                 <div>
                   <label htmlFor="pre-dur" className="block text-[12px] font-mono text-white/75 mb-1">
                     Durasi pengujian (menit)
@@ -2054,7 +2230,7 @@ export default function BatchDetailPage() {
                     Default 15 menit. Grafik hasil pengujian sensor akan otomatis ditampilkan saat pengujian selesai.
                   </p>
                 </div>
-              )}
+              ) : null}
               <div>
                 <label htmlFor="pre-temp" className="block text-[12px] font-mono text-white/75 mb-1">
                   Suhu udang (°C)
@@ -2180,13 +2356,21 @@ export default function BatchDetailPage() {
               <button
                 onClick={() => void handleSessionModalSubmit()}
                 disabled={sessionModal.busy}
-                className="flex-1 py-2.5 rounded-xl bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-400/50 text-emerald-100 text-sm font-mono font-bold transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
+                className={`flex-1 py-2.5 rounded-xl text-sm font-mono font-bold transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 ${
+                  sessionModal.mode === 'edit'
+                    ? 'bg-blue-500/25 hover:bg-blue-500/35 border border-blue-400/50 text-blue-100 focus-visible:ring-blue-400/60'
+                    : sessionModal.captureMode === 'time_range'
+                      ? 'bg-cyan-500/25 hover:bg-cyan-500/35 border border-cyan-400/50 text-cyan-100 focus-visible:ring-cyan-400/60'
+                      : 'bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-400/50 text-emerald-100 focus-visible:ring-emerald-400/60'
+                }`}
               >
                 {sessionModal.busy
                   ? 'Memproses…'
                   : sessionModal.mode === 'edit'
                     ? 'Simpan Perubahan'
-                    : 'Mulai Sesi'}
+                    : sessionModal.captureMode === 'time_range'
+                      ? 'Ambil Data Sesi'
+                      : 'Mulai Sesi (Live)'}
               </button>
             </div>
           </div>
