@@ -463,8 +463,7 @@ export default function BatchDetailPage() {
     const sorted = [...g.sessions].sort((a, b) => b.elapsedHours - a.elapsedHours);
     if (sorted.length === 0) return 'H0';
     if (g.storageCondition === 'cold') {
-      const days = Math.floor(sorted[0].elapsedHours / 24) + 1;
-      return `D${days}`;
+      return `H${sorted[0].elapsedHours + 12}`;
     }
     return `H${sorted[0].elapsedHours + 6}`;
   };
@@ -2089,7 +2088,7 @@ export default function BatchDetailPage() {
       {/* Modal form tahap: data observasi sebelum sesi dibuat, atau koreksi
           data tahap lewat ikon pensil di tabel riwayat. Judul dinamis: nomor
           tahap = posisi timepoint di jadwal grup (H0→Tahap 1, H6 SR→Tahap 2,
-          D1 SD→Tahap 2, dst.). */}
+          H12 SD→Tahap 2, dst.). */}
       {sessionModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60"

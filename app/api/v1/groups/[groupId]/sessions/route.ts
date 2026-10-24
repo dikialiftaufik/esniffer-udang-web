@@ -41,7 +41,7 @@ export async function POST(
     try {
       parseTimepointCode(timepointCode);
     } catch {
-      throw validationError('Field "timepointCode" harus H0, H6, …, D1–D14');
+      throw validationError('Field "timepointCode" harus berformat H<jam> atau D<hari> (misal H0, H12, H24, D1)');
     }
 
     for (const existing of group.sessions) {

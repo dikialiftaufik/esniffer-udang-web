@@ -138,7 +138,10 @@ test('Baseline cutoff: 2 menit setelah mulai sesi', async () => {
 test('Urutan timepoint baku per kondisi simpan', async () => {
   const { TIMEPOINT_SEQUENCES } = await import('../shared/dataset.ts');
   assert.deepStrictEqual(TIMEPOINT_SEQUENCES.room_temp[1], 'H6');
-  assert.deepStrictEqual(TIMEPOINT_SEQUENCES.cold[1], 'D1');
+  assert.deepStrictEqual(TIMEPOINT_SEQUENCES.cold[1], 'H12');
+  assert.deepStrictEqual(TIMEPOINT_SEQUENCES.cold[2], 'H24');
+  assert.deepStrictEqual(TIMEPOINT_SEQUENCES.cold[3], 'H36');
+  assert.deepStrictEqual(TIMEPOINT_SEQUENCES.cold[4], 'H48');
   for (const seq of Object.values(TIMEPOINT_SEQUENCES)) {
     const hours = seq.map((t) => timepointToElapsedHours(t));
     const sorted = [...hours].sort((a, b) => a - b);
