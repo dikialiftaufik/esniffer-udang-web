@@ -309,11 +309,17 @@ export async function GET(
       },
     });
 
+    const filename = filterSessionId
+      ? `dataset-${batchId}-${filterSessionId}.csv`
+      : filterTimepoint
+        ? `dataset-${batchId}-${filterTimepoint}.csv`
+        : `dataset-${batchId}.csv`;
+
     return new Response(stream, {
       status: 200,
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="dataset-${batchId}.csv"`,
+        'Content-Disposition': `attachment; filename="${filename}"`,
         'Cache-Control': 'no-store, private',
         'x-request-id': requestId,
       },

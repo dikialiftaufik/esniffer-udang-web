@@ -1862,14 +1862,24 @@ export default function BatchDetailPage() {
                             <div className="flex flex-col items-start gap-1.5">
                               <div className="flex flex-wrap items-center gap-1.5">
                                 {s.status === 'complete' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setResultModalSessionId(s.sessionId)}
-                                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-semibold font-mono transition-all"
-                                    title="Lihat grafik sensor dan hasil pengujian"
-                                  >
-                                    <span>📈</span> Hasil
-                                  </button>
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => setResultModalSessionId(s.sessionId)}
+                                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-semibold font-mono transition-all"
+                                      title="Lihat grafik sensor dan hasil pengujian"
+                                    >
+                                      <span>📈</span> Hasil
+                                    </button>
+                                    <a
+                                      href={`/api/v1/sessions/${encodeURIComponent(s.sessionId)}/export`}
+                                      download
+                                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-semibold font-mono transition-all"
+                                      title="Unduh CSV data sensor tahap ini"
+                                    >
+                                      <span>📥</span> CSV
+                                    </a>
+                                  </>
                                 )}
                                 {editable && (
                                   <button

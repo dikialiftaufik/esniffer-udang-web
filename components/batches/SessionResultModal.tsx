@@ -73,6 +73,32 @@ export default function SessionResultModal({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'gas' | 'climate'>('gas');
+  const [isDownloadingCsv, setIsDownloadingCsv] = useState(false);
+
+  const handleDownloadCsv = async () => {
+    if (!sessionId) return;
+    try {
+      setIsDownloadingCsv(true);
+      const res = await apiFetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}/export`);
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.error?.message || `Gagal mengunduh CSV (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `hasil-${data?.session?.sessionId ?? sessionId}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Gagal mengunduh CSV');
+    } finally {
+      setIsDownloadingCsv(false);
+    }
+  };
 
   useEffect(() => {
     if (!isOpen || !sessionId) return;
@@ -176,13 +202,24 @@ export default function SessionResultModal({
               Chamber: {session?.chamber?.name ?? '—'} • Device: {session?.device?.mqttDeviceId ?? '—'}
             </p>
           </div>
-          <button
-            onClick={onClose}
-            aria-label="Tutup modal hasil pengujian"
-            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition-colors"
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleDownloadCsv()}
+              disabled={isDownloadingCsv || isLoading || !readings.length}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-mono font-bold transition-all disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+              title="Unduh seluruh data pembacaan sensor tahap ini sebagai file CSV"
+            >
+              <span>📥</span> {isDownloadingCsv ? 'Mengunduh…' : 'Unduh CSV'}
+            </button>
+            <button
+              onClick={onClose}
+              aria-label="Tutup modal hasil pengujian"
+              className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition-colors"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {isLoading ? (
@@ -481,14 +518,31 @@ export default function SessionResultModal({
           </>
         )}
 
-        <div className="flex justify-end pt-2 border-t border-white/10">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white font-mono text-xs font-bold transition-colors"
-          >
-            Tutup
-          </button>
+        <div className="flex flex-wrap items-center justify-between pt-3 border-t border-white/10 gap-3">
+          <div>
+            {readings.length > 0 && (
+              <span className="text-[11px] font-mono text-white/50">
+                {readings.length} titik pembacaan sensor siap diekspor ke CSV.
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleDownloadCsv()}
+              disabled={isDownloadingCsv || isLoading || !readings.length}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-400/50 text-emerald-100 font-mono text-xs font-bold transition-all disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+            >
+              <span>📥</span> {isDownloadingCsv ? 'Memproses Ekspor CSV…' : `Unduh CSV Hasil (${session?.timepointCode ?? 'Tahap'})`}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white font-mono text-xs font-bold transition-colors"
+            >
+              Tutup
+            </button>
+          </div>
         </div>
       </div>
     </div>

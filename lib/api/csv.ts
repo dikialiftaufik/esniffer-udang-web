@@ -137,6 +137,29 @@ export const DATASET_CSV_HEADERS = [
 ];
 
 /**
+ * Header CSV ekspor hasil pengujian per sesi individual.
+ * Menyertakan detik relatif dari awal pengujian, timestamp UTC & WIB,
+ * respons sensor gas, suhu, kelembaban, serta observasi suhu & berat udang.
+ */
+export const SESSION_READINGS_CSV_HEADERS = [
+  'detik_ke',
+  'timestamp_utc',
+  'waktu_wib',
+  'session_id',
+  'batch_id',
+  'timepoint_code',
+  'elapsed_hours',
+  'mq137_raw',
+  'mq136_raw',
+  'mq4_raw',
+  'temp_chamber_c',
+  'rh_chamber_pct',
+  'is_baseline',
+  'shrimp_temp_c',
+  'shrimp_weight_g',
+];
+
+/**
  * Header CSV metadata batch (satu baris per sesi, atau per grup bila belum
  * ada sesi). Selalu berisi data yang diisi operator di form, sehingga
  * pengguna tetap mendapat isiannya walau belum ada reading sensor.

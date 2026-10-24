@@ -3,7 +3,8 @@ import assert from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { prisma, closeDb, allocateHistorySequence } from '../../lib/db/client.ts';
 import { GET as exportBatch } from '../../app/api/v1/batches/[batchId]/export/route.ts';
-import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, CSV_UTF8_BOM } from '../../lib/api/csv.ts';
+import { GET as exportSession } from '../../app/api/v1/sessions/[sessionId]/export/route.ts';
+import { DATASET_CSV_HEADERS, DATASET_METADATA_CSV_HEADERS, SESSION_READINGS_CSV_HEADERS, CSV_UTF8_BOM } from '../../lib/api/csv.ts';
 import { hashPassword } from '../../lib/auth/password.ts';
 import { createSession as createAuthSession, buildSessionCookie } from '../../lib/auth/session.ts';
 
@@ -349,5 +350,36 @@ describe('HTTP API v1: Dataset Batch CSV Export (Fase 7)', () => {
   it('5. format tidak dikenal ditolak 422', async () => {
     const res = await getExport('?format=pdf');
     assert.strictEqual(res.status, 422);
+  });
+
+  it('6. Ekspor CSV per sesi menghasilkan header, format RFC 4180, dan row telemetri', async () => {
+    const res = await exportSession(
+      new Request(`http://localhost:3000/api/v1/sessions/${SESSION}/export`, {
+        headers: { Cookie: viewerCookie },
+      }),
+      { params: Promise.resolve({ sessionId: SESSION }) }
+    );
+    assert.strictEqual(res.status, 200);
+    assert.match(res.headers.get('content-type') ?? '', /text\/csv/);
+    assert.strictEqual(
+      res.headers.get('Content-Disposition'),
+      `attachment; filename="hasil-${SESSION}.csv"`
+    );
+
+    const clone = res.clone();
+    const headBytes = new Uint8Array(await clone.arrayBuffer()).slice(0, 3);
+    assert.deepStrictEqual([...headBytes], [0xef, 0xbb, 0xbf]);
+
+    const text = await res.text();
+    const lines = text.split('\r\n').filter((l) => l.length > 0);
+    assert.ok(lines.length >= 2); // header + minimal 1 data row
+
+    const headerCols = lines[0].split(',');
+    assert.deepStrictEqual(headerCols, SESSION_READINGS_CSV_HEADERS);
+
+    const firstData = lines[1].split(',');
+    assert.strictEqual(firstData[headerCols.indexOf('session_id')], SESSION);
+    assert.strictEqual(firstData[headerCols.indexOf('batch_id')], BATCH);
+    assert.strictEqual(firstData[headerCols.indexOf('timepoint_code')], 'H0');
   });
 });
